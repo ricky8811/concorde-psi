@@ -82,7 +82,18 @@ function ensureFirebaseAuth(callback) {
 
 function firebaseWritePSI(record) {
   if (!db || !record || !record.id) return;
-  db.collection('psis').doc(record.id).set(record).catch(function() {});
+  try {
+    // Serialize through JSON to strip Sets, undefined values, and other
+    // non-Firestore-compatible types before writing
+    var clean = JSON.parse(JSON.stringify(record));
+    db.collection('psis').doc(clean.id).set(clean).then(function() {
+      fbLog('PSI saved: ' + clean.id.slice(0,8));
+    }).catch(function(e) {
+      fbLog('PSI write ERR: ' + e.message);
+    });
+  } catch(e) {
+    fbLog('PSI serialize ERR: ' + e.message);
+  }
 }
 
 function firebaseDeletePSI(id) {
@@ -93,7 +104,14 @@ function firebaseDeletePSI(id) {
 
 function firebaseSaveLift(data) {
   if (!db || !data) return;
-  db.collection('lift').doc('current').set(data).catch(function() {});
+  try {
+    var clean = JSON.parse(JSON.stringify(data));
+    db.collection('lift').doc('current').set(clean).catch(function(e) {
+      fbLog('Lift write ERR: ' + e.message);
+    });
+  } catch(e) {
+    fbLog('Lift serialize ERR: ' + e.message);
+  }
 }
 
 function firebaseArchiveLift(record) {
