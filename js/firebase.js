@@ -19,23 +19,36 @@ const firebaseConfig = {
 
 var db = null;
 
+// ── Temporary on-screen debug log (remove after sync confirmed) ──
+function fbLog(msg) {
+  console.log('[FB]', msg);
+  var el = document.getElementById('fbDebug');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'fbDebug';
+    el.style.cssText = 'position:fixed;bottom:60px;left:0;right:0;background:#000;color:#0f0;font-size:11px;padding:6px 10px;z-index:9999;max-height:160px;overflow-y:auto;font-family:monospace';
+    document.body.appendChild(el);
+  }
+  el.innerHTML += '<div>' + new Date().toTimeString().slice(0,8) + ' ' + msg + '</div>';
+  el.scrollTop = el.scrollHeight;
+}
+
 // Initialize only if config has been filled in
 if (firebaseConfig.apiKey) {
   try {
     firebase.initializeApp(firebaseConfig);
     db = firebase.firestore();
+    fbLog('Firebase init OK');
     // Enable offline persistence (works offline, syncs when reconnected)
     db.enablePersistence({ synchronizeTabs: true }).catch(function(err) {
-      if (err.code === 'failed-precondition') {
-        // Multiple tabs open — persistence only in one tab (fine)
-      } else if (err.code === 'unimplemented') {
-        // Browser doesn't support persistence (fine, use online-only)
-      }
+      fbLog('Persistence: ' + err.code);
     });
   } catch (e) {
-    console.warn('Firebase init error:', e);
+    fbLog('Init ERROR: ' + e.message);
     db = null;
   }
+} else {
+  fbLog('No API key — Firebase disabled');
 }
 
 // ─── ANONYMOUS AUTH ───────────────────────────────────────────
@@ -43,15 +56,21 @@ if (firebaseConfig.apiKey) {
 // Workers see no login prompt; Firebase just verifies the request
 // comes from a real app session (not an external API call).
 function ensureFirebaseAuth(callback) {
-  if (!firebase.apps.length || !db) { if (callback) callback(); return; }
+  if (!firebase.apps.length || !db) {
+    fbLog('Auth skip — no Firebase');
+    if (callback) callback();
+    return;
+  }
   var auth = firebase.auth();
   auth.onAuthStateChanged(function(user) {
     if (user) {
+      fbLog('Auth OK uid=' + user.uid.slice(0,8));
       if (callback) callback();
     } else {
+      fbLog('Signing in anonymously...');
       auth.signInAnonymously().catch(function(e) {
-        console.warn('Anonymous auth failed:', e);
-        if (callback) callback();  // proceed anyway (open rules fallback)
+        fbLog('Auth FAILED: ' + e.message);
+        if (callback) callback();
       });
     }
   });
@@ -215,8 +234,10 @@ function initFirebaseSync() {
 }
 
 function _startSyncAfterAuth() {
+  fbLog('Starting sync...');
   // Pull all PSIs from Firestore → populate localStorage first
   db.collection('psis').get().then(function(snapshot) {
+    fbLog('PSIs loaded: ' + snapshot.size);
     snapshot.forEach(function(doc) {
       var data = doc.data();
       if (data && data.id) {
@@ -226,7 +247,7 @@ function _startSyncAfterAuth() {
     });
     if (typeof refreshDash === 'function') refreshDash();
   }).catch(function(err) {
-    console.warn('Initial PSI load error:', err);
+    fbLog('PSI load ERROR: ' + err.message);
   });
 
   // Pull personnel
