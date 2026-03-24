@@ -158,8 +158,19 @@ function firebaseSavePSISigs(psiId, data) {
   if (!db || !psiId || !data) return;
   try {
     var clean = JSON.parse(JSON.stringify(data));
-    // merge:true so updating worker 0 doesn't wipe worker 1's existing entry
-    db.collection('sigs').doc(psiId).set(clean, { merge: true }).catch(function() {});
+    if (clean.initials && clean.initials.length) {
+      // Use arrayUnion so each device's initials accumulate — never overwrite others
+      var update = {};
+      if (clean.workers)    update.workers    = clean.workers;
+      if (clean.supervisor) update.supervisor = clean.supervisor;
+      update.initials = firebase.firestore.FieldValue.arrayUnion.apply(
+        firebase.firestore.FieldValue, clean.initials
+      );
+      db.collection('sigs').doc(psiId).set(update, { merge: true }).catch(function() {});
+    } else {
+      // No initials — plain merge is fine
+      db.collection('sigs').doc(psiId).set(clean, { merge: true }).catch(function() {});
+    }
   } catch(e) {}
 }
 
@@ -201,11 +212,11 @@ function syncSigsForPSI(psiId) {
       }
     }
 
-    // Break initials — combine, deduplicate by name+breakType+date
+    // Break initials — remote first so strokes version wins over metadata-only local entry
     if (remote.initials && remote.initials.length) {
       var seen = {};
       var combined = [];
-      ((local.initials || []).concat(remote.initials)).forEach(function(e) {
+      (remote.initials.concat(local.initials || [])).forEach(function(e) {
         var key = (e.name||'')+'|'+(e.breakType||'')+'|'+(e.date||'');
         if (!seen[key]) { seen[key] = true; combined.push(e); }
       });
@@ -301,7 +312,17 @@ function mergePSI(remote, local) {
     if (local.sigs && Object.keys(local.sigs).length)     merged.sigs          = local.sigs;
     if (local.supSigStrokes && local.supSigStrokes.length) merged.supSigStrokes = local.supSigStrokes;
     if (local.supSigPng)                                   merged.supSigPng     = local.supSigPng;
-    if (local.initials && local.initials.length)           merged.initials      = local.initials;
+    // Merge initials from both sources — never replace one side entirely
+    if (local.initials && local.initials.length) {
+      var seen = {};
+      var combined = [];
+      // Remote first so strokes are preserved when both sides have the same entry
+      ((remote.initials || []).concat(local.initials)).forEach(function(e) {
+        var key = (e.name||'')+'|'+(e.breakType||'')+'|'+(e.date||'');
+        if (!seen[key]) { seen[key] = true; combined.push(e); }
+      });
+      merged.initials = combined;
+    }
   }
   return merged;
 }

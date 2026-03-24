@@ -549,13 +549,14 @@ function confirmQuickSign() {
     });
     writePSI(psi);
 
-    // Push initials strokes to sigs/{psiId}
+    // Push only the newly added initials to sigs/{psiId}
+    // (arrayUnion in firebaseSavePSISigs accumulates entries from all devices)
     if (typeof firebaseSavePSISigs === 'function') {
-      var _initData = (psi.initials || []).map(function(e) {
-        return { name: e.name, breakType: e.breakType, date: e.date,
-                 time: e.time, strokes: e.strokes || [] };
+      var _newInitials = breakTypes.map(function(bt) {
+        return { name: name, breakType: bt, date: todayISO(),
+                 time: nowTime(), strokes: strokes };
       });
-      firebaseSavePSISigs(psi.id, { initials: _initData });
+      firebaseSavePSISigs(psi.id, { initials: _newInitials });
     }
   }
 
