@@ -194,7 +194,7 @@ function startFirebaseSync() {
     var data = doc.data();
     if (data && data.data) {
       lsSetJSON(LEARN_KEY, data.data);
-      if (typeof applyTemplateOverrides === 'function') applyTemplateOverrides();
+      if (typeof applyTriggerOverrides === 'function') applyTriggerOverrides();
     }
   }, function() {});
 
@@ -204,7 +204,7 @@ function startFirebaseSync() {
     var data = doc.data();
     if (data && data.data) {
       localStorage.setItem('psi_template_full_overrides', JSON.stringify(data.data));
-      if (typeof applyTemplateOverrides === 'function') applyTemplateOverrides();
+      if (typeof applyTriggerOverrides === 'function') applyTriggerOverrides();
     }
   }, function() {});
 
@@ -213,7 +213,7 @@ function startFirebaseSync() {
     var data = doc.data();
     if (data && data.data) {
       localStorage.setItem('psi_trigger_overrides', JSON.stringify(data.data));
-      if (typeof applyTemplateOverrides === 'function') applyTemplateOverrides();
+      if (typeof applyTriggerOverrides === 'function') applyTriggerOverrides();
     }
   }, function() {});
 
@@ -265,19 +265,24 @@ function initFirebaseSync() {
 function cleanGhostPSIs() {
   if (!db) return;
   db.collection('psis').get().then(function(snapshot) {
+    var cleaned = false;
     snapshot.forEach(function(doc) {
       var data = doc.data();
-      if (!data) return;
-      // Ghost = submitted/no taskDesc, or completely empty record
-      if (!data.taskDesc && !data.deleted) {
+      if (!data || data.deleted) return;
+      // Ghost = no task description OR submitted with no named workers
+      var workerCount = (data.workers || []).filter(function(w) { return w && w.name; }).length;
+      var isGhost = !data.taskDesc || (data.submittedForApproval && workerCount === 0);
+      if (isGhost) {
         db.collection('psis').doc(doc.id).set(
           { id: doc.id, deleted: true, deletedAt: Date.now() },
           { merge: true }
         ).catch(function() {});
         lsDel(psiKey(doc.id));
         removeFromIndex(doc.id);
+        cleaned = true;
       }
     });
+    if (cleaned && typeof refreshDash === 'function') refreshDash();
   }).catch(function() {});
 }
 
@@ -304,14 +309,14 @@ function _startSyncAfterAuth() {
   db.collection('config').doc('templateOverrides').get().then(function(doc) {
     if (doc.exists && doc.data() && doc.data().data) {
       localStorage.setItem('psi_template_full_overrides', JSON.stringify(doc.data().data));
-      if (typeof applyTemplateOverrides === 'function') applyTemplateOverrides();
+      if (typeof applyTriggerOverrides === 'function') applyTriggerOverrides();
     }
   }).catch(function() {});
 
   db.collection('config').doc('triggerOverrides').get().then(function(doc) {
     if (doc.exists && doc.data() && doc.data().data) {
       localStorage.setItem('psi_trigger_overrides', JSON.stringify(doc.data().data));
-      if (typeof applyTemplateOverrides === 'function') applyTemplateOverrides();
+      if (typeof applyTriggerOverrides === 'function') applyTriggerOverrides();
     }
   }).catch(function() {});
 
@@ -321,7 +326,7 @@ function _startSyncAfterAuth() {
   db.collection('config').doc('learned').get().then(function(doc) {
     if (doc.exists && doc.data() && doc.data().data) {
       lsSetJSON(LEARN_KEY, doc.data().data);
-      if (typeof applyTemplateOverrides === 'function') applyTemplateOverrides();
+      if (typeof applyTriggerOverrides === 'function') applyTriggerOverrides();
     }
   }).catch(function() {});
 
