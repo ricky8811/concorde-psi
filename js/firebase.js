@@ -268,10 +268,18 @@ function cleanGhostPSIs() {
     var cleaned = false;
     snapshot.forEach(function(doc) {
       var data = doc.data();
-      if (!data || data.deleted) return;
-      // Ghost = no task description OR submitted with no named workers
+      if (!data || data.deleted || data.approved) return;
+      // Ghost detection:
+      // 1. No task description at all
+      // 2. Submitted but no signatures AND no workers with names
+      // 3. Submitted but no signatures AND created more than 2 days ago
       var workerCount = (data.workers || []).filter(function(w) { return w && w.name; }).length;
-      var isGhost = !data.taskDesc || (data.submittedForApproval && workerCount === 0);
+      var sigCount    = Object.keys(data.sigs || {}).length;
+      var ageMs       = Date.now() - (data.createdAt || 0);
+      var twoDaysMs   = 2 * 24 * 60 * 60 * 1000;
+      var isGhost = !data.taskDesc ||
+                    (data.submittedForApproval && sigCount === 0 && workerCount === 0) ||
+                    (data.submittedForApproval && sigCount === 0 && ageMs > twoDaysMs);
       if (isGhost) {
         db.collection('psis').doc(doc.id).set(
           { id: doc.id, deleted: true, deletedAt: Date.now() },
