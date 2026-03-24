@@ -6,13 +6,12 @@
 let _liftData  = { units: {} };   // full persisted data
 let _curLift   = null;            // currently selected unit key
 
-const LIFT_FLEET_KEY = 'concorde_lift_fleet';
-
 function loadFleet() {
   try { return JSON.parse(localStorage.getItem(LIFT_FLEET_KEY)) || {}; } catch(e) { return {}; }
 }
 function saveFleet(fleet) {
   localStorage.setItem(LIFT_FLEET_KEY, JSON.stringify(fleet));
+  if (typeof firebaseSaveFleet === 'function') firebaseSaveFleet(fleet);
 }
 
 // Build a default checks object with every field set to 'ok'

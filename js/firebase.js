@@ -132,6 +132,22 @@ function firebaseSaveLearned(obj) {
   } catch(e) {}
 }
 
+function firebaseSaveFleet(fleet) {
+  if (!db) return;
+  try {
+    var clean = JSON.parse(JSON.stringify(fleet));
+    db.collection('config').doc('liftFleet').set({ data: clean }).catch(function() {});
+  } catch(e) {}
+}
+
+function firebaseSaveCrew(crew) {
+  if (!db) return;
+  try {
+    var clean = JSON.parse(JSON.stringify(crew));
+    db.collection('config').doc('crew').set({ data: clean }).catch(function() {});
+  } catch(e) {}
+}
+
 function firebaseSaveSignature(name, strokes, png) {
   if (!db || !name) return;
   try {
@@ -239,6 +255,27 @@ function startFirebaseSync() {
     }
   }, function() {});
 
+  // Lift fleet — unit numbers added on any device appear on all devices
+  db.collection('config').doc('liftFleet').onSnapshot(function(doc) {
+    if (!doc.exists) return;
+    var data = doc.data();
+    if (data && data.data) {
+      localStorage.setItem(LIFT_FLEET_KEY, JSON.stringify(data.data));
+      // Re-render the lift unit bar if the pane is currently open
+      var liftPane = document.getElementById('liftPane');
+      if (liftPane && liftPane.style.display !== 'none') {
+        if (typeof renderLiftBar === 'function') renderLiftBar();
+      }
+    }
+  }, function() {});
+
+  // Crew roster — additions/changes appear on all devices
+  db.collection('config').doc('crew').onSnapshot(function(doc) {
+    if (!doc.exists) return;
+    var data = doc.data();
+    if (data && data.data) lsSetJSON(CREW_KEY, data.data);
+  }, function() {});
+
   // Signatures — sync crew signatures to all devices
   db.collection('signatures').onSnapshot(function(snapshot) {
     snapshot.docChanges().forEach(function(change) {
@@ -327,6 +364,18 @@ function _startSyncAfterAuth() {
     if (doc.exists && doc.data() && doc.data().data) {
       lsSetJSON(LEARN_KEY, doc.data().data);
       if (typeof applyTriggerOverrides === 'function') applyTriggerOverrides();
+    }
+  }).catch(function() {});
+
+  db.collection('config').doc('liftFleet').get().then(function(doc) {
+    if (doc.exists && doc.data() && doc.data().data) {
+      localStorage.setItem(LIFT_FLEET_KEY, JSON.stringify(doc.data().data));
+    }
+  }).catch(function() {});
+
+  db.collection('config').doc('crew').get().then(function(doc) {
+    if (doc.exists && doc.data() && doc.data().data) {
+      lsSetJSON(CREW_KEY, doc.data().data);
     }
   }).catch(function() {});
 

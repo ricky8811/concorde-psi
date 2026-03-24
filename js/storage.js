@@ -202,6 +202,7 @@ function loadCrew() {
 
 function saveCrew(crew) {
   lsSetJSON(CREW_KEY, crew);
+  if (typeof firebaseSaveCrew === 'function') firebaseSaveCrew(crew);
 }
 
 // ── SUPERVISOR CONFIG ──────────────────────────────────────────
