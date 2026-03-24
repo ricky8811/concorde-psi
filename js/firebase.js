@@ -159,6 +159,16 @@ function startFirebaseSync() {
     if (data) lsSetJSON(SUPERVISOR_CFG_KEY, data);
   }, function() {});
 
+  // Learned templates
+  db.collection('config').doc('learned').onSnapshot(function(doc) {
+    if (!doc.exists) return;
+    var data = doc.data();
+    if (data && data.data) {
+      lsSetJSON(LEARN_KEY, data.data);
+      if (typeof applyTemplateOverrides === 'function') applyTemplateOverrides();
+    }
+  }, function() {});
+
   // Lift history
   db.collection('lift_hist').onSnapshot(function(snapshot) {
     var remoteHist = [];
@@ -205,6 +215,13 @@ function _startSyncAfterAuth() {
 
   db.collection('config').doc('supervisor').get().then(function(doc) {
     if (doc.exists && doc.data()) lsSetJSON(SUPERVISOR_CFG_KEY, doc.data());
+  }).catch(function() {});
+
+  db.collection('config').doc('learned').get().then(function(doc) {
+    if (doc.exists && doc.data() && doc.data().data) {
+      lsSetJSON(LEARN_KEY, doc.data().data);
+      if (typeof applyTemplateOverrides === 'function') applyTemplateOverrides();
+    }
   }).catch(function() {});
 
   startFirebaseSync();
