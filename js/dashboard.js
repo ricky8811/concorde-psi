@@ -278,8 +278,8 @@ function renderPSICard(psi, isHist) {
       right.appendChild(dup);
     }
 
-    // Delete — supervisor always; workers only on their own non-submitted draft
-    if (isSup || (isOwner && !psi.submittedForApproval)) {
+    // Delete — supervisor only
+    if (isSup) {
       const del = document.createElement('button');
       del.className   = 'psi-del';
       del.textContent = 'Delete';
@@ -527,9 +527,9 @@ function deletePSIConfirm(id, desc) {
   const psi   = loadPSI(id);
   if (!psi) return;
 
-  // Workers can only delete their own non-approved drafts
-  if (me.role !== 'supervisor' && (psi.approved || psi.createdBy !== me.name)) {
-    toast('Only the supervisor can delete this PSI');
+  // Only supervisors can delete PSIs
+  if (me.role !== 'supervisor') {
+    toast('Only the supervisor can delete PSIs');
     return;
   }
 
