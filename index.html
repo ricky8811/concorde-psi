@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+  <title>Concorde PSI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════
+     LOGIN SCREEN
+═══════════════════════════════════════════════════ -->
+<div id="loginScreen" style="display:flex">
+  <div class="login-box">
+
+    <div class="login-head">
+      <div class="login-logo">Concorde</div>
+      <div class="login-sub">Airport Services · Pre-Job Safety Instruction</div>
+    </div>
+
+    <!-- Step 1: Role selection -->
+    <div id="ls1">
+      <p class="ls-label">Select your role</p>
+      <div class="role-row">
+        <button id="roleWorkerBtn"     class="role-btn active" onclick="setRole('worker')">Worker</button>
+        <button id="roleSupervisorBtn" class="role-btn"        onclick="setRole('supervisor')">Supervisor</button>
+      </div>
+      <button class="btn btn-primary btn-full" onclick="lsNext()">Next →</button>
+    </div>
+
+    <!-- Step 2: PIN pad -->
+    <div id="ls2" style="display:none">
+      <p class="ls-label">Enter PIN</p>
+      <div id="pinDots" class="pin-dots">
+        <span></span><span></span><span></span><span></span>
+      </div>
+      <div id="pinError" class="pin-error" style="display:none"></div>
+      <div class="pin-grid">
+        <button class="pin-btn" onclick="pp('1')">1</button>
+        <button class="pin-btn" onclick="pp('2')">2</button>
+        <button class="pin-btn" onclick="pp('3')">3</button>
+        <button class="pin-btn" onclick="pp('4')">4</button>
+        <button class="pin-btn" onclick="pp('5')">5</button>
+        <button class="pin-btn" onclick="pp('6')">6</button>
+        <button class="pin-btn" onclick="pp('7')">7</button>
+        <button class="pin-btn" onclick="pp('8')">8</button>
+        <button class="pin-btn" onclick="pp('9')">9</button>
+        <button class="pin-btn pin-btn-muted" onclick="lsBack()">Back</button>
+        <button class="pin-btn" onclick="pp('0')">0</button>
+        <button class="pin-btn pin-btn-muted" onclick="pdel()">⌫</button>
+      </div>
+      <div id="pinLockMsg" class="pin-lock" style="display:none"></div>
+    </div>
+
+    <!-- Step 3: Name picker + manual entry -->
+    <div id="ls3" style="display:none">
+      <p class="ls-label">Who are you?</p>
+
+      <!-- Registered workers as tap chips -->
+      <div id="personnelPicker" class="personnel-picker" style="display:none"></div>
+
+      <!-- "or type" divider — only shown when chips are present -->
+      <p id="personnelOrLine" class="ls-or-line" style="display:none">or type your name</p>
+
+      <div class="form-group">
+        <input id="nameInput" type="text" placeholder="First and last name"
+               autocomplete="name" autocapitalize="words"
+               onkeydown="if(event.key==='Enter')lsConfirm()">
+      </div>
+      <button class="btn btn-primary btn-full" onclick="lsConfirm()">Sign In →</button>
+      <button class="btn btn-muted btn-full" onclick="lsBack()">← Change PIN</button>
+    </div>
+
+  </div>
+</div><!-- /loginScreen -->
+
+
+<!-- ═══════════════════════════════════════════════════
+     APP HEADER (sticky masthead — hidden until logged in)
+═══════════════════════════════════════════════════ -->
+<header id="appHeader" style="display:none">
+  <div class="hd-top">
+    <div>
+      <div class="hd-logo">Concorde</div>
+      <div class="hd-sub">Airport Services · Pre-Job Safety Instruction</div>
+    </div>
+    <div id="wxBox" class="hd-wx" onclick="openForecastModal()" title="Tap for 7-day forecast">
+      <div id="wxTemp" class="hd-wx-t">—°</div>
+      <div id="wxDesc" class="hd-wx-d">YYC ▾</div>
+    </div>
+  </div>
+
+  <div class="hd-dateline">
+    <span id="hdDate"></span>
+    <span id="hdShift"></span>
+    <span id="hdOpenCount"></span>
+  </div>
+
+  <div class="hd-btns">
+    <button class="btn btn-primary btn-sm" onclick="newPSI()">＋ New PSI</button>
+    <button id="btnPairUp"   class="btn btn-secondary btn-sm" style="display:none" onclick="showCrewPane()">👷 Crew</button>
+    <button id="btnLift"     class="btn btn-secondary btn-sm" style="display:none" onclick="showLiftPane()">🔧 Lift Inspection</button>
+    <button id="btnPresets" class="btn btn-secondary btn-sm" style="display:none" onclick="showPresetsPane()">📋 Templates</button>
+    <button class="btn-muted" onclick="doSignOut()">Sign out</button>
+  </div>
+</header>
+
+
+<!-- ═══════════════════════════════════════════════════
+     DASHBOARD
+═══════════════════════════════════════════════════ -->
+<div id="dashboard" style="display:none">
+
+  <!-- Pending approvals moved to ⏳ Pending tab — kept hidden for backward compat -->
+  <div id="pendingSection" style="display:none">
+    <div id="pendingList"></div>
+  </div>
+
+  <!-- Search -->
+  <div class="dash-search-wrap">
+    <input id="dashSearch" type="search" placeholder="Search PSIs…"
+           oninput="renderDash()" autocomplete="off">
+  </div>
+
+  <!-- Tab bar -->
+  <div class="tab-bar">
+    <button id="tabActive"  class="tab-btn active" onclick="switchTab('active')">Active</button>
+    <button id="tabHistory" class="tab-btn"        onclick="switchTab('history')" style="display:none">History</button>
+    <button id="tabPending" class="tab-btn"        onclick="switchTab('pending')" style="display:none">⏳ Pending <span id="pendingBadge" class="tab-badge"></span></button>
+  </div>
+
+  <!-- Active list -->
+  <div id="activeList" class="psi-list"></div>
+
+  <!-- History list -->
+  <div id="historyList" class="psi-list" style="display:none"></div>
+
+  <!-- Pending approvals tab (supervisor only) -->
+  <div id="dashPending" class="psi-list" style="display:none"></div>
+
+</div><!-- /dashboard -->
+
+
+<!-- ═══════════════════════════════════════════════════
+     PSI EDITOR
+═══════════════════════════════════════════════════ -->
+<div id="editor" style="display:none">
+
+  <!-- Step nav bar -->
+  <div class="step-nav">
+    <button class="step-back-btn" onclick="edBack()">←</button>
+    <div class="step-tabs" id="stepTabs">
+      <button class="step-tab active" onclick="goStep(0)">Job</button>
+      <button class="step-tab"        onclick="goStep(1)">Hazards</button>
+      <button class="step-tab"        onclick="goStep(2)">Tasks</button>
+      <button class="step-tab"        onclick="goStep(3)">PPE</button>
+      <button class="step-tab"        onclick="goStep(4)">Workers</button>
+      <button class="step-tab"        onclick="goStep(5)">Sign</button>
+      <button class="step-tab"        onclick="goStep(6)">Approve</button>
+    </div>
+  </div>
+  <div class="step-progress"><div id="stepBar" class="step-progress-bar" style="width:14%"></div></div>
+
+  <!-- Step 0: Job Selection -->
+  <div id="step0" class="step-section">
+    <div class="step-inner">
+      <div class="section-head">Job Selection</div>
+
+      <div class="form-group">
+        <label>Search jobs</label>
+        <input id="jobSearch" type="search" placeholder="Filter templates…"
+               oninput="renderJobLib(this.value)" autocomplete="off">
+      </div>
+
+      <div id="jobLibrary" class="job-library"></div>
+
+      <!-- Weather Advisory (auto-shown when conditions warrant) -->
+      <div id="wxAdvisory" class="wx-advisory" style="display:none"></div>
+
+      <div class="section-divider">Job Details</div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Date</label>
+          <input id="jobDate" type="date" oninput="schedSave(); onPSIDateChange(this.value)">
+        </div>
+        <div class="form-group">
+          <label>Time</label>
+          <input id="jobTime" type="time" oninput="schedSave()">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Task Description</label>
+        <input id="jobDesc" type="text" placeholder="What is the work?"
+               oninput="schedSave(); onJobDescInput()">
+        <div id="jobMatchRow" class="job-match-row" style="display:none"></div>
+      </div>
+
+      <div class="form-group">
+        <label>Location</label>
+        <input id="jobLoc" type="text" placeholder="Where is the work?"
+               oninput="schedSave()">
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Job No. / Permit</label>
+          <input id="jobNumber" type="text" oninput="schedSave()">
+        </div>
+        <div class="form-group">
+          <label>Muster Point</label>
+          <input id="jobMuster" type="text" oninput="schedSave()">
+        </div>
+      </div>
+
+      <button class="btn btn-primary btn-full" onclick="goStep(1)">Next: Hazards →</button>
+    </div>
+  </div>
+
+  <!-- Step 1: Hazard Identification -->
+  <div id="step1" class="step-section" style="display:none">
+    <div class="step-inner">
+      <div class="section-head">Hazard Identification</div>
+
+      <!-- Condition Toggles Panel -->
+      <div class="cond-panel">
+        <div class="cond-panel-head" onclick="this.parentElement.classList.toggle('open')">
+          <span class="cond-panel-title">⚙ Work Conditions</span>
+          <span class="cond-panel-hint">Tap to auto-add relevant hazards</span>
+          <span class="cond-chevron">▸</span>
+        </div>
+        <div class="cond-panel-body">
+
+          <div class="cond-group">
+            <div class="cond-group-label">Work Environment</div>
+            <div class="cond-chips">
+              <button class="cond-chip" data-cond="outside"    onclick="toggleCondition('outside',this)">Outside</button>
+              <button class="cond-chip" data-cond="night"      onclick="toggleCondition('night',this)">Night Work</button>
+              <button class="cond-chip" data-cond="weatherExp" onclick="toggleCondition('weatherExp',this)">Weather Exposure</button>
+            </div>
+          </div>
+
+          <div class="cond-group">
+            <div class="cond-group-label">Access Method</div>
+            <div class="cond-chips">
+              <button class="cond-chip" data-cond="ladder" onclick="toggleCondition('ladder',this)">Ladder</button>
+              <button class="cond-chip" data-cond="lift"   onclick="toggleCondition('lift',this)">Lift / MEWP</button>
+            </div>
+          </div>
+
+          <div class="cond-group">
+            <div class="cond-group-label">Electrical Status</div>
+            <div class="cond-chips">
+              <button class="cond-chip" data-cond="energized" onclick="toggleCondition('energized',this)">Energized</button>
+              <button class="cond-chip" data-cond="isolated"  onclick="toggleCondition('isolated',this)">Isolated / LOTO</button>
+            </div>
+          </div>
+
+          <div class="cond-group">
+            <div class="cond-group-label">Risk Factors</div>
+            <div class="cond-chips">
+              <button class="cond-chip" data-cond="vehicleTraffic"  onclick="toggleCondition('vehicleTraffic',this)">Vehicle Traffic</button>
+              <button class="cond-chip" data-cond="publicPresent"   onclick="toggleCondition('publicPresent',this)">Public Present</button>
+              <button class="cond-chip" data-cond="overheadWork"    onclick="toggleCondition('overheadWork',this)">Overhead Work</button>
+              <button class="cond-chip" data-cond="workingAlone"    onclick="toggleCondition('workingAlone',this)">Working Alone</button>
+              <button class="cond-chip" data-cond="confinedSpace"   onclick="toggleCondition('confinedSpace',this)">Confined Space</button>
+              <button class="cond-chip" data-cond="hotWork"         onclick="toggleCondition('hotWork',this)">Hot Work</button>
+              <button class="cond-chip" data-cond="chemicals"       onclick="toggleCondition('chemicals',this)">Chemicals</button>
+              <button class="cond-chip" data-cond="heavyLift"       onclick="toggleCondition('heavyLift',this)">Heavy Lifting</button>
+              <button class="cond-chip" data-cond="noisyArea"       onclick="toggleCondition('noisyArea',this)">Noisy Area (&gt;85dB)</button>
+              <button class="cond-chip" data-cond="dustAirborne"    onclick="toggleCondition('dustAirborne',this)">Dust / Particles</button>
+              <button class="cond-chip" data-cond="permitRequired"  onclick="toggleCondition('permitRequired',this)">Permit Required</button>
+            </div>
+          </div>
+
+          <button class="btn btn-secondary btn-full cond-apply-btn" onclick="applyConditionPanel()">⚡ Apply Conditions →</button>
+        </div>
+      </div>
+
+      <p class="section-hint">Select all hazards that apply to this job.</p>
+      <div id="hazardArea"></div>
+
+      <!-- Custom Hazards -->
+      <div class="custom-hazard-section">
+        <div class="custom-hazard-head" onclick="this.parentElement.classList.toggle('open')">
+          <span>➕ Custom / Site-Specific Hazards</span>
+          <span class="pm-chevron">›</span>
+        </div>
+        <div class="custom-hazard-body">
+          <p class="section-hint" style="margin-top:0">Add hazards not in the list above. They save for future PSIs.</p>
+          <div id="customHazardChecks"></div>
+          <div class="custom-hazard-add">
+            <input id="customHazardInput" type="text" placeholder="Type hazard name and press Enter…"
+                   onkeydown="onCustomHazardKey(event)">
+            <button class="btn btn-secondary btn-sm" onclick="addCustomHazard()">＋ Add</button>
+          </div>
+        </div>
+      </div>
+
+      <button class="btn btn-primary btn-full" onclick="goStep(2)" style="margin-top:12px">Next: Task Steps →</button>
+    </div>
+  </div>
+
+  <!-- Step 2: Task Steps / Hazards / Controls -->
+  <div id="step2" class="step-section" style="display:none">
+    <div class="step-inner">
+
+      <div class="task-section-block">
+        <div class="task-section-label">📋 Task / Steps</div>
+        <p class="section-hint">What tasks or steps will be performed?</p>
+        <textarea id="taskStepsArea" class="task-section-area" rows="5"
+                  placeholder="e.g. 1. Access bridge deck&#10;2. Inspect structural bolts&#10;3. Test limit switches…"
+                  oninput="onTaskTextInput()"></textarea>
+      </div>
+
+      <div class="task-section-block">
+        <div class="task-section-label">⚠️ Potential Hazards</div>
+        <p class="section-hint">What could go wrong or cause harm?</p>
+        <textarea id="hazardTextArea" class="task-section-area" rows="4"
+                  placeholder="e.g. Fall from height&#10;Pinch points on mechanism&#10;Electrical shock…"
+                  oninput="onTaskTextInput()"></textarea>
+      </div>
+
+      <div class="task-section-block">
+        <div class="task-section-label">🛡️ Control Measures</div>
+        <p class="section-hint">How is each hazard controlled or eliminated?</p>
+        <textarea id="controlTextArea" class="task-section-area" rows="4"
+                  placeholder="e.g. Fall arrest harness worn&#10;Gloves and awareness&#10;LOTO applied…"
+                  oninput="onTaskTextInput()"></textarea>
+      </div>
+
+      <div class="task-btns" style="margin-top:8px">
+        <button id="regenWordingBtn" class="btn btn-secondary regen-btn" onclick="regenerateWording()" style="display:none">↺ Regenerate Wording</button>
+      </div>
+      <button class="btn btn-primary btn-full" onclick="goStep(3)" style="margin-top:8px">Next: PPE →</button>
+    </div>
+  </div>
+
+  <!-- Step 3: PPE Required -->
+  <div id="step3" class="step-section" style="display:none">
+    <div class="step-inner">
+      <div class="section-head">PPE Required</div>
+      <p class="section-hint">Tap each item required for this job.</p>
+      <div id="ppeGrid" class="ppe-grid"></div>
+      <button class="btn btn-primary btn-full" onclick="goStep(4)">Next: Workers →</button>
+    </div>
+  </div>
+
+  <!-- Step 4: Workers on Job -->
+  <div id="step4" class="step-section" style="display:none">
+    <div class="step-inner">
+      <div class="section-head">Workers on Job</div>
+
+      <!-- Quick-add chips from personnel list -->
+      <div id="workerQuickAdd" class="worker-quick-add" style="display:none">
+        <div class="worker-quick-label">Tap to add:</div>
+        <div id="workerQuickChips" class="personnel-picker"></div>
+      </div>
+
+      <div id="workerRows" class="worker-rows"></div>
+      <div id="workerAutoList" class="autocomplete-list" style="display:none"></div>
+      <button class="btn btn-secondary btn-full" onclick="addWorkerRow()">＋ Add Manually</button>
+      <button class="btn btn-primary btn-full" onclick="goStep(5)" style="margin-top:12px">Next: Signatures →</button>
+    </div>
+  </div>
+
+  <!-- Step 5: Worker Signatures -->
+  <div id="step5" class="step-section" style="display:none">
+    <div class="step-inner">
+      <!-- Approved PSI banner (shown when worker opens an approved PSI) -->
+      <div id="approvedBanner" class="approved-banner" style="display:none"></div>
+      <div class="section-head">Worker Signatures</div>
+      <div id="sigStatus" class="sig-status"></div>
+      <div id="workerPicker" class="worker-picker"></div>
+
+      <!-- Active signature panel -->
+      <div id="activeSigPanel" style="display:none">
+        <div id="sigWorkerName" class="sig-panel-name"></div>
+        <canvas id="sigCanvas" class="sig-canvas" touch-action="none"></canvas>
+        <div class="sig-actions">
+          <button class="btn btn-secondary btn-sm" onclick="clearSig('sigCanvas')">Clear</button>
+          <button class="btn btn-secondary btn-sm" onclick="cancelSig()">Cancel</button>
+          <button class="btn btn-green btn-sm"     onclick="confirmSig()">✓ Confirm</button>
+        </div>
+      </div>
+
+      <div class="step-actions">
+        <button class="btn btn-secondary btn-full" onclick="buildPDF(currentPSIData(),'draft')">↓ Download PDF</button>
+        <button id="btnSubmit" class="btn btn-accent btn-full" onclick="submitForApproval()">Submit for Approval</button>
+        <button id="btnSupSign" class="btn btn-green btn-full" style="display:none" onclick="goStep(6)">Approve as Supervisor →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 6: Supervisor Sign-Off -->
+  <div id="step6" class="step-section" style="display:none">
+    <div class="step-inner">
+      <div class="section-head">Supervisor Sign-Off</div>
+
+      <div id="supSigSummary" class="sig-status"></div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Supervisor Name</label>
+          <input id="supName" type="text" placeholder="Full name" oninput="schedSave()">
+        </div>
+        <div class="form-group">
+          <label>Date / Time</label>
+          <input id="supDateTime" type="datetime-local">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Supervisor Signature</label>
+        <canvas id="supSigCanvas" class="sig-canvas" touch-action="none"></canvas>
+        <div class="sig-actions">
+          <button class="btn btn-secondary btn-sm" onclick="clearSig('supSigCanvas')">Clear</button>
+          <button class="btn btn-secondary btn-sm" onclick="loadSavedSig()">Use Saved Sig</button>
+        </div>
+      </div>
+
+      <div class="step-actions">
+        <button class="btn btn-secondary btn-full" onclick="goStep(5)">← Back</button>
+        <button class="btn btn-secondary btn-full" onclick="buildPDF(currentPSIData(),'draft')">Download Draft PDF</button>
+        <button class="btn btn-accent btn-full"    onclick="approvePSI()">Approve &amp; Download PDF</button>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /editor -->
+
+
+<!-- ═══════════════════════════════════════════════════
+     CREW PANE
+═══════════════════════════════════════════════════ -->
+<div id="pairUpPane" class="fullpane" style="display:none">
+
+  <div class="pane-header">
+    <button class="pane-back" onclick="hideCrewPane()">←</button>
+    <span class="pane-title">Crew</span>
+    <span id="crewSyncDot" class="sync-dot"></span>
+    <span id="crewDate" class="pane-date"></span>
+  </div>
+
+  <div class="tab-bar">
+    <button id="crewTab1" class="tab-btn active" onclick="showCrewTab('crew')">👷 Crew</button>
+    <button id="crewTab2" class="tab-btn"        onclick="showCrewTab('results')">📋 Results</button>
+    <button id="crewTab3" class="tab-btn"        onclick="showCrewTab('history')">🕐 History</button>
+    <button id="crewTab4" class="tab-btn"        onclick="showCrewTab('personnel')">👤 Personnel</button>
+  </div>
+
+  <!-- Crew tab -->
+  <div id="crewTabCrew" class="pane-content">
+    <div class="crew-section">
+      <div class="crew-section-head">
+        Electricians <span id="elecCount" class="badge">0</span>
+      </div>
+      <div id="elecList" class="crew-list"></div>
+      <div class="crew-add-row">
+        <input id="elecIn" type="text" placeholder="Add electrician…" autocapitalize="words">
+        <button class="btn btn-secondary btn-sm" onclick="crewAdd('elec')">＋</button>
+      </div>
+    </div>
+
+    <div class="crew-section">
+      <div class="crew-section-head">
+        Millwrights <span id="millCount" class="badge">0</span>
+      </div>
+      <div id="millList" class="crew-list"></div>
+      <div class="crew-add-row">
+        <input id="millIn" type="text" placeholder="Add millwright…" autocapitalize="words">
+        <button class="btn btn-secondary btn-sm" onclick="crewAdd('mill')">＋</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results tab -->
+  <div id="crewTabResults" class="pane-content" style="display:none">
+    <div id="crewResults"></div>
+    <div id="crewSaveBtn" style="display:none;padding:16px">
+      <button class="btn btn-accent btn-full" onclick="crewSaveShift()">Save Shift</button>
+    </div>
+  </div>
+
+  <!-- History tab -->
+  <div id="crewTabHistory" class="pane-content" style="display:none">
+    <div id="crewHistList"></div>
+  </div>
+
+  <!-- Personnel tab -->
+  <div id="crewTabPersonnel" class="pane-content" style="display:none">
+
+    <!-- Workers list -->
+    <div class="crew-section">
+      <div class="crew-section-head">Workers</div>
+      <div id="personnelList"></div>
+      <div class="crew-add-row" style="margin-top:8px">
+        <input id="personnelInput" type="text" placeholder="Add worker…"
+               autocapitalize="words"
+               onkeydown="if(event.key==='Enter')personnelAdd()">
+        <button class="btn btn-secondary btn-sm" onclick="personnelAdd()">＋</button>
+      </div>
+    </div>
+
+    <!-- Supervisor account -->
+    <div class="crew-section" style="margin-top:8px">
+      <div class="crew-section-head">Supervisor Account</div>
+      <div class="form-group" style="padding:0 18px">
+        <label>Supervisor Name</label>
+        <input id="supSettingName" type="text" autocapitalize="words" placeholder="Full name">
+      </div>
+      <div class="form-row" style="padding:0 18px">
+        <div class="form-group">
+          <label>New PIN <span style="font-size:11px;color:var(--text3)">(leave blank to keep)</span></label>
+          <input id="supSettingPin" type="password" inputmode="numeric" maxlength="4" placeholder="····">
+        </div>
+        <div class="form-group">
+          <label>Confirm PIN</label>
+          <input id="supSettingPin2" type="password" inputmode="numeric" maxlength="4" placeholder="····">
+        </div>
+      </div>
+      <div style="padding:0 18px 16px">
+        <button class="btn btn-accent btn-full" onclick="saveSupervisorSettings()">Save Settings</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Sticky bottom bar -->
+  <div id="crewBottomBar" class="crew-bottom-bar">
+    <button class="btn btn-accent btn-full" onclick="crewGenerate()">🎯 Generate &amp; Assign</button>
+    <button class="btn btn-secondary btn-sm" onclick="crewReset()" style="margin-top:6px;width:100%">↺ Reset to Default</button>
+  </div>
+
+</div><!-- /pairUpPane -->
+
+
+<!-- ═══════════════════════════════════════════════════
+     LIFT INSPECTION PANE
+═══════════════════════════════════════════════════ -->
+<div id="liftPane" class="fullpane" style="display:none">
+
+  <div class="pane-header">
+    <button class="pane-back" onclick="hideLiftPane()">←</button>
+    <span class="pane-title">Lift Inspection</span>
+  </div>
+
+  <!-- Tab bar -->
+  <div class="tab-bar">
+    <button id="liftTabBtn1" class="tab-btn active" onclick="showLiftTab('inspect')">🔧 Inspect</button>
+    <button id="liftTabBtn2" class="tab-btn"        onclick="showLiftTab('history')">🕐 History</button>
+  </div>
+
+  <!-- ── INSPECT TAB ── -->
+  <div id="liftTabInspect">
+
+  <!-- Unit selector bar -->
+  <div id="liftUnitBar" class="lift-unit-bar"></div>
+
+  <div class="step-inner">
+    <div class="form-row">
+      <div class="form-group">
+        <label>Operator Name</label>
+        <input id="liftOperator" type="text" placeholder="Full name" oninput="liftSave()">
+      </div>
+      <div class="form-group">
+        <label>Date</label>
+        <input id="liftDate" type="date" oninput="liftSave()">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Make / Model</label>
+        <input id="liftMake" type="text" oninput="liftSave()">
+      </div>
+      <div class="form-group">
+        <label>Unit #</label>
+        <input id="liftUnit" type="text" oninput="liftSave()">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Meter Reading</label>
+      <input id="liftMeter" type="text" oninput="liftSave()">
+    </div>
+
+    <!-- Check sections rendered by JS -->
+    <div id="liftChecks"></div>
+
+    <div class="form-group" style="margin-top:16px">
+      <label>Remarks</label>
+      <textarea id="liftRemarks" rows="3" oninput="liftSave()"></textarea>
+    </div>
+
+    <!-- Dynamic action buttons rendered by renderLiftActions() -->
+    <div id="liftActions" class="step-actions"></div>
+
+  </div>
+  </div><!-- /liftTabInspect -->
+
+  <!-- ── HISTORY TAB ── -->
+  <div id="liftTabHistory" style="display:none">
+    <!-- Unit filter chips -->
+    <div id="liftHistFilter" class="lift-unit-bar" style="padding:12px 16px 4px"></div>
+    <!-- History cards -->
+    <div id="liftHistList" class="step-inner" style="padding-top:8px"></div>
+  </div>
+
+</div><!-- /liftPane -->
+
+<!-- ADD LIFT TO FLEET MODAL -->
+<div id="addLiftModal" class="modal-overlay" style="display:none">
+  <div class="modal-box">
+    <div class="modal-title">Add Lift to Fleet</div>
+
+    <div class="form-group">
+      <label>Unit Number</label>
+      <input id="addLiftUnit" type="text" placeholder="e.g. MEWP-01, Scissors-02"
+             autocapitalize="characters"
+             onkeydown="if(event.key==='Enter') document.getElementById('addLiftMake').focus()">
+    </div>
+    <div class="form-group">
+      <label>Make / Model</label>
+      <input id="addLiftMake" type="text" placeholder="e.g. JLG 450AJ, Genie S-40"
+             onkeydown="if(event.key==='Enter') confirmAddLift()">
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeAddLiftModal()">Cancel</button>
+      <button class="btn btn-accent"    onclick="confirmAddLift()">Add to Fleet</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════
+     QUICK SIGN / INITIAL MODAL
+═══════════════════════════════════════════════════ -->
+<div id="quickSignModal" class="modal-overlay" style="display:none">
+  <div class="modal-box">
+    <div class="modal-title">Add Initials</div>
+
+    <!-- PSI worker name chips (auto-populated from PSI workers) -->
+    <div id="psiWorkerChips" class="psi-worker-chips"></div>
+
+    <div class="form-group">
+      <label>Your Name</label>
+      <input id="quickSignName" type="text" placeholder="Full name"
+             oninput="onQuickSignNameInput(this)">
+      <div id="quickSignAutoList" class="autocomplete-list" style="display:none"></div>
+    </div>
+    <div class="form-group">
+      <label>Break Period</label>
+      <div class="break-picker">
+        <button class="break-btn active" data-break="1st"   onclick="selectBreak(this,'1st')">1st Break</button>
+        <button class="break-btn"        data-break="lunch" onclick="selectBreak(this,'lunch')">Lunch</button>
+        <button class="break-btn"        data-break="2nd"   onclick="selectBreak(this,'2nd')">2nd Break</button>
+        <button id="allBreaksBtn" class="break-btn" onclick="toggleAllBreaks(this)">All Breaks</button>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Signature</label>
+      <canvas id="quickSignCanvas" class="sig-canvas" touch-action="none"></canvas>
+      <div class="sig-actions">
+        <button class="btn btn-secondary btn-sm" onclick="clearSig('quickSignCanvas')">Clear</button>
+      </div>
+    </div>
+    <div class="step-actions">
+      <button class="btn btn-secondary btn-full" onclick="cancelQuickSign()">Cancel</button>
+      <button class="btn btn-accent btn-full"    onclick="confirmQuickSign()">✓ Initial</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════
+     APPROVE MODAL
+═══════════════════════════════════════════════════ -->
+<div id="approveModal" class="modal-overlay" style="display:none">
+  <div class="modal-box">
+    <div class="modal-title">Approve PSI</div>
+    <div id="approveInfo" class="modal-info"></div>
+
+    <div class="form-group">
+      <label>Supervisor Name</label>
+      <input id="approveSupName" type="text" placeholder="Full name">
+    </div>
+
+    <div class="form-group">
+      <label>Signature</label>
+      <canvas id="approveCanvas" class="sig-canvas" touch-action="none"></canvas>
+      <div class="sig-actions">
+        <button class="btn btn-secondary btn-sm" onclick="clearSig('approveCanvas')">Clear</button>
+        <button class="btn btn-secondary btn-sm" onclick="loadApprovalSig()">Use Saved Sig</button>
+      </div>
+    </div>
+
+    <div class="form-group" style="margin-top:8px">
+      <label class="toggle-label">
+        <input id="approveWorkerFieldsOpen" type="checkbox" checked style="margin-right:8px">
+        Keep worker signature fields open after approval
+      </label>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">
+        When checked, workers can still add their name and signature after this PSI is approved.
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeApproveModal()">Cancel</button>
+      <button class="btn btn-accent"    onclick="doApprove()">Approve &amp; Download PDF</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════
+     PRESETS / TEMPLATE MANAGER PANE
+═══════════════════════════════════════════════════ -->
+<div id="presetsPane" class="fullpane" style="display:none">
+
+  <div class="pane-header">
+    <button class="pane-back" onclick="hidePresetsPane()">←</button>
+    <span class="pane-title">Templates</span>
+    <button id="presetNewBtn" class="btn btn-accent btn-sm" onclick="openNewTemplateModal()" style="margin-left:auto">＋ New</button>
+  </div>
+
+  <div class="step-inner">
+    <div class="form-group">
+      <input id="presetsSearch" type="search" placeholder="Search templates…"
+             oninput="renderPresetsList(this.value)" autocomplete="off">
+    </div>
+    <div id="presetsList"></div>
+  </div>
+
+</div>
+
+<!-- PRESET EDIT MODAL -->
+<div id="presetModal" class="modal-overlay" style="display:none">
+  <div class="modal-box pm-scrollbox">
+    <div class="modal-title" id="presetModalTitle">Edit Template</div>
+
+    <div class="form-group">
+      <label>Template Name</label>
+      <input id="pmName" type="text" autocapitalize="words">
+    </div>
+
+    <div class="form-group">
+      <label>Description</label>
+      <input id="pmDesc" type="text">
+    </div>
+
+    <div class="form-group">
+      <label>Task Description</label>
+      <input id="pmTaskDesc" type="text" placeholder="Default task description…">
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Location</label>
+        <input id="pmLoc" type="text" placeholder="Default location…">
+      </div>
+      <div class="form-group">
+        <label>Muster Point</label>
+        <input id="pmMuster" type="text" placeholder="Default muster point…">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Trigger Words <span style="font-size:11px;color:var(--text3)">(tap × to remove, type + Enter to add)</span></label>
+      <div id="pmTriggerChips" class="trigger-chips"></div>
+      <input id="pmTriggerInput" type="text" placeholder="Add trigger word…"
+             onkeydown="presetAddTrigger(event)">
+    </div>
+
+    <!-- Default Hazards -->
+    <div class="pm-section open">
+      <div class="pm-section-head" onclick="this.parentElement.classList.toggle('open')">
+        <span>Default Hazards</span>
+        <span class="pm-chevron">›</span>
+      </div>
+      <div class="pm-section-body">
+        <div id="pmHazardChecks"></div>
+      </div>
+    </div>
+
+    <!-- Default PPE -->
+    <div class="form-group" style="margin-top:12px">
+      <label>Default PPE</label>
+      <div id="pmPPEChecks"></div>
+    </div>
+
+    <!-- Default Task / Hazard / Control — matches PSI editor layout -->
+    <div class="form-group" style="margin-top:12px">
+      <label>📋 Default Task Steps</label>
+      <textarea id="pmTaskStepsText" class="task-section-area" rows="4"
+                placeholder="e.g. 1. Access work area&#10;2. Complete inspection…"></textarea>
+    </div>
+    <div class="form-group" style="margin-top:8px">
+      <label>⚠️ Default Potential Hazards</label>
+      <textarea id="pmHazardText" class="task-section-area" rows="3"
+                placeholder="List potential hazards for this job type…"></textarea>
+    </div>
+    <div class="form-group" style="margin-top:8px">
+      <label>🛡️ Default Control Measures</label>
+      <textarea id="pmControlText" class="task-section-area" rows="3"
+                placeholder="List control measures for this job type…"></textarea>
+    </div>
+
+    <!-- Delete (learned only) -->
+    <button id="pmDeleteBtn" class="preset-delete-btn" style="display:none"
+            onclick="deleteLearnedTemplate()">🗑 Delete Template</button>
+
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closePresetModal()">Cancel</button>
+      <button class="btn btn-accent"    onclick="savePresetEdits()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════
+     7-DAY FORECAST MODAL
+═══════════════════════════════════════════════════ -->
+<div id="forecastModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeForecastModal()">
+  <div class="modal-box forecast-modal-box">
+    <div class="modal-title" style="display:flex;align-items:center;justify-content:space-between">
+      <span>📅 7-Day Forecast · YYC</span>
+      <button class="btn-muted" onclick="closeForecastModal()" style="font-size:18px;line-height:1">×</button>
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:12px">
+      Highlighted shifts are <strong>SHIFT 1</strong> working days. Tap the date field in a PSI to load forecasted advisories.
+    </div>
+    <div id="forecastBody" class="forecast-body">
+      <div style="text-align:center;padding:32px;color:var(--text3)">Loading…</div>
+    </div>
+    <div style="margin-top:12px">
+      <button class="btn btn-secondary btn-full" onclick="fetchForecast().then(function(){renderForecastModal();})">↺ Refresh</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════
+     TOAST & OFFLINE BAR
+═══════════════════════════════════════════════════ -->
+<div id="toast"></div>
+<div id="offlineBar" style="display:none">⚠ No connection — changes saved locally</div>
+
+
+<!-- ═══════════════════════════════════════════════════
+     SCRIPTS (order matters)
+═══════════════════════════════════════════════════ -->
+<script src="js/sheets.js"></script>
+<script src="js/config.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/weather.js"></script>
+<script src="js/signatures.js"></script>
+<script src="js/hazards.js"></script>
+<script src="js/rules.js"></script>
+<script src="js/wording.js"></script>
+<script src="js/dashboard.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/presets.js"></script>
+<script src="js/pdf.js"></script>
+<script src="js/safety.js"></script>
+<script src="js/crew.js"></script>
+<script src="js/personnel.js"></script>
+<script src="js/lift.js"></script>
+<script src="js/shifts.js"></script>
+<script src="js/app.js"></script>
+
+</body>
+</html>
