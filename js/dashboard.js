@@ -150,7 +150,10 @@ function renderPSICard(psi, isHist) {
     psi.workers.forEach(function(w, i) {
       if (!w.name) return;
       const pip = document.createElement('span');
-      pip.className = 'pip' + (psi.sigs && psi.sigs[i] ? ' done' : '');
+      // sigs = local stroke data; sigWorkers = synced name list from other devices
+      var hasSig = (psi.sigs && psi.sigs[i]) ||
+                   (psi.sigWorkers && psi.sigWorkers.indexOf(w.name) !== -1);
+      pip.className = 'pip' + (hasSig ? ' done' : '');
       pip.title     = w.name;
       pips.appendChild(pip);
     });
@@ -192,7 +195,9 @@ function renderPSICard(psi, isHist) {
   right.className = 'psi-right';
 
   const workerCount = (psi.workers || []).filter(function(w) { return w.name; }).length;
-  const sigCount    = Object.keys(psi.sigs || {}).length;
+  // Use local sigs if available; fall back to synced sigWorkers list from other devices
+  const sigCount = Object.keys(psi.sigs || {}).length ||
+                   (psi.sigWorkers ? psi.sigWorkers.length : 0);
 
   const count = document.createElement('div');
   count.className   = 'psi-count';
