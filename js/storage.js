@@ -64,11 +64,13 @@ function writePSI(record) {
   if (!record || !record.id) return;
   lsSetJSON(psiKey(record.id), record);
   addToIndex(record.id);
+  if (typeof firebaseWritePSI === 'function') firebaseWritePSI(record);
 }
 
 function deletePSI(id) {
   lsDel(psiKey(id));
   removeFromIndex(id);
+  if (typeof firebaseDeletePSI === 'function') firebaseDeletePSI(id);
 }
 
 // ── MEMORY (saved sigs, usage counts, known locations) ────────
@@ -139,6 +141,7 @@ function loadLearned() {
 
 function saveLearned(templates) {
   lsSetJSON(LEARN_KEY, templates);
+  if (typeof firebaseSaveLearned === 'function') firebaseSaveLearned(templates);
 }
 
 function saveLearnedTemplate(psi) {
@@ -197,6 +200,7 @@ function loadSupervisorConfig() {
 
 function saveSupervisorConfig(cfg) {
   lsSetJSON(SUPERVISOR_CFG_KEY, cfg);
+  if (typeof firebaseSaveSupervisor === 'function') firebaseSaveSupervisor(cfg);
 }
 
 // ── PERSONNEL ─────────────────────────────────────────────────
@@ -207,6 +211,7 @@ function loadPersonnel() {
 
 function savePersonnel(list) {
   lsSetJSON(PERSONNEL_KEY, list);
+  if (typeof firebaseSavePersonnel === 'function') firebaseSavePersonnel(list);
 }
 
 // ── LIFT ──────────────────────────────────────────────────────
@@ -217,6 +222,7 @@ function loadLift() {
 
 function saveLift(data) {
   lsSetJSON(LIFT_KEY, data);
+  if (typeof firebaseSaveLift === 'function') firebaseSaveLift(data);
 }
 
 // ── LIFT INSPECTION HISTORY ───────────────────────────────────
@@ -242,4 +248,5 @@ function archiveLiftInspection(record) {
   hist.unshift(entry);          // newest first
   if (hist.length > 200) hist = hist.slice(0, 200);   // keep last 200
   saveLiftHistory(hist);
+  if (typeof firebaseArchiveLift === 'function') firebaseArchiveLift(entry);
 }

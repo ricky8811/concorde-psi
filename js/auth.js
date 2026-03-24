@@ -262,6 +262,7 @@ function openDash() {
   refreshDash();
   fetchWeather();
   if (typeof fetchForecast === 'function') fetchForecast();  // pre-load 7-day forecast
+  if (typeof initFirebaseSync === 'function') initFirebaseSync();  // start real-time sync
   startPoll();
 
   // Render dots now that fonts are loaded
