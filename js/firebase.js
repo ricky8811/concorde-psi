@@ -50,25 +50,27 @@ function firebaseWritePSI(record) {
   if (!db || !record || !record.id) return;
   try {
     var clean = JSON.parse(JSON.stringify(record));
-    // Signature drawings are NEVER stored in Firestore — they live only on the
-    // device where they were drawn. Firestore stores job data + who-signed metadata.
-    // This avoids document size limits and sync overwrites destroying local drawings.
-    delete clean.sigs;
-    delete clean.supSigPng;
-    delete clean.supSigStrokes;
-    if (Array.isArray(clean.initials)) {
-      // Keep initials metadata (name, time, breakType) but strip drawing data
-      clean.initials = clean.initials.map(function(e) {
-        return { name: e.name, time: e.time, date: e.date, breakType: e.breakType };
+    // Strip PNG data URLs only — they are 50-200 KB each and bust the 1 MB
+    // Firestore document limit.  Strokes are kept (3-5 KB each) so any device
+    // can regenerate the PDF with every signer's drawing via drawSigLines().
+    if (clean.sigs && typeof clean.sigs === 'object') {
+      Object.keys(clean.sigs).forEach(function(k) {
+        if (clean.sigs[k]) delete clean.sigs[k].png;
       });
     }
-    // Track who has signed as a simple name list (for status badges on other devices)
-    if (record.sigs && typeof record.sigs === 'object') {
-      var workers = record.workers || [];
-      clean.sigWorkers = Object.keys(record.sigs).map(function(k) {
-        return (workers[parseInt(k)] || {}).name || '';
-      }).filter(Boolean);
+    delete clean.supSigPng;
+    if (Array.isArray(clean.initials)) {
+      clean.initials = clean.initials.map(function(e) {
+        // keep strokes for PDF; strip png
+        return { name: e.name, time: e.time, date: e.date, breakType: e.breakType,
+                 strokes: e.strokes || [] };
+      });
     }
+    // Convenience list so other devices can show "2/3 signed" without iterating sigs
+    var workers = record.workers || [];
+    clean.sigWorkers = Object.keys(record.sigs || {}).map(function(k) {
+      return (workers[parseInt(k)] || {}).name || '';
+    }).filter(Boolean);
     db.collection('psis').doc(clean.id).set(clean).catch(function() {});
   } catch(e) {}
 }
@@ -165,6 +167,63 @@ function firebaseSaveSignature(name, strokes, png) {
 }
 
 
+// ─── PSI MERGE HELPER ─────────────────────────────────────────
+// Merges an incoming Firestore PSI with whatever is stored locally.
+// Job data (hazards, PPE, status, approval) always comes from Firestore.
+// Signature strokes are merged PER-WORKER so PDFs work on any device:
+//   - Local sig wins if it has strokes (it also has the PNG for on-screen display)
+//   - Firestore sig fills in any workers that signed on a different device
+// PNG fields are local-only and never stored in Firestore.
+
+function mergePSI(remote, local) {
+  var merged = Object.assign({}, remote);
+
+  if (!local) return merged;
+
+  // Worker sigs — per-index merge
+  var remoteSigs = remote.sigs  || {};
+  var localSigs  = local.sigs   || {};
+  var allKeys    = Object.keys(Object.assign({}, remoteSigs, localSigs));
+  var mergedSigs = {};
+  allKeys.forEach(function(k) {
+    var r = remoteSigs[k];
+    var l = localSigs[k];
+    if (l && l.strokes && l.strokes.length) {
+      // Local is best — has PNG too
+      mergedSigs[k] = l;
+    } else if (r && r.strokes && r.strokes.length) {
+      // Came from another device via Firestore — strokes only, no PNG
+      mergedSigs[k] = r;
+    } else if (l || r) {
+      mergedSigs[k] = l || r;
+    }
+  });
+  merged.sigs = mergedSigs;
+
+  // Supervisor sig — prefer local (has PNG); fall back to Firestore strokes
+  if (local.supSigStrokes && local.supSigStrokes.length) {
+    merged.supSigStrokes = local.supSigStrokes;
+    merged.supSigPng     = local.supSigPng || '';
+  }
+
+  // Break initials — combine unique entries; prefer local (has PNG+strokes)
+  var remoteInits = remote.initials  || [];
+  var localInits  = local.initials   || [];
+  if (localInits.length || remoteInits.length) {
+    var seen = {};
+    var combined = [];
+    // Local first (better quality)
+    localInits.concat(remoteInits).forEach(function(entry) {
+      var key = (entry.name || '') + '|' + (entry.breakType || '') + '|' + (entry.date || '');
+      if (!seen[key]) { seen[key] = true; combined.push(entry); }
+    });
+    merged.initials = combined;
+  }
+
+  return merged;
+}
+
+
 // ─── SYNC LISTENERS (Firestore → localStorage → UI) ──────────
 
 var _syncStarted = false;
@@ -184,17 +243,7 @@ function startFirebaseSync() {
           lsDel(psiKey(data.id));
           removeFromIndex(data.id);
         } else {
-          // Merge: keep any local signature drawings — Firestore doesn't store them.
-          // Everything else (job data, status, approval) comes from Firestore.
-          var local = lsGetJSON(psiKey(data.id), null);
-          var merged = Object.assign({}, data);
-          if (local) {
-            if (local.sigs         && Object.keys(local.sigs).length)  merged.sigs         = local.sigs;
-            if (local.supSigStrokes && local.supSigStrokes.length)      merged.supSigStrokes = local.supSigStrokes;
-            if (local.supSigPng)                                        merged.supSigPng    = local.supSigPng;
-            if (local.initials     && local.initials.length)           merged.initials     = local.initials;
-          }
-          lsSetJSON(psiKey(data.id), merged);
+          lsSetJSON(psiKey(data.id), mergePSI(data, lsGetJSON(psiKey(data.id), null)));
           addToIndex(data.id);
         }
         changed = true;
@@ -342,16 +391,7 @@ function _startSyncAfterAuth() {
         lsDel(psiKey(data.id));
         removeFromIndex(data.id);
       } else {
-        // Merge: preserve any local signature drawings
-        var local = lsGetJSON(psiKey(data.id), null);
-        var merged = Object.assign({}, data);
-        if (local) {
-          if (local.sigs         && Object.keys(local.sigs).length)  merged.sigs         = local.sigs;
-          if (local.supSigStrokes && local.supSigStrokes.length)      merged.supSigStrokes = local.supSigStrokes;
-          if (local.supSigPng)                                        merged.supSigPng    = local.supSigPng;
-          if (local.initials     && local.initials.length)           merged.initials     = local.initials;
-        }
-        lsSetJSON(psiKey(data.id), merged);
+        lsSetJSON(psiKey(data.id), mergePSI(data, lsGetJSON(psiKey(data.id), null)));
         addToIndex(data.id);
       }
     });
