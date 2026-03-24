@@ -170,6 +170,59 @@ function firebaseLoadPSISigs(psiId) {
   }).catch(function() { return null; });
 }
 
+// Fetch sigs/{psiId} and merge strokes into the localStorage copy of the PSI.
+// Called whenever a PSI changes so every device automatically gets all sig drawings.
+function syncSigsForPSI(psiId) {
+  if (!db || !psiId) return;
+  firebaseLoadPSISigs(psiId).then(function(remote) {
+    if (!remote) return;
+    var local = lsGetJSON(psiKey(psiId), null);
+    if (!local) return;
+    var changed = false;
+
+    // Worker sigs — fill in any slots the local device is missing
+    if (remote.workers) {
+      if (!local.sigs) local.sigs = {};
+      Object.keys(remote.workers).forEach(function(k) {
+        var r = remote.workers[k];
+        var l = local.sigs[k];
+        if (r && r.strokes && r.strokes.length && !(l && l.strokes && l.strokes.length)) {
+          local.sigs[k] = r;
+          changed = true;
+        }
+      });
+    }
+
+    // Supervisor sig
+    if (remote.supervisor && remote.supervisor.strokes && remote.supervisor.strokes.length) {
+      if (!local.supSigStrokes || !local.supSigStrokes.length) {
+        local.supSigStrokes = remote.supervisor.strokes;
+        changed = true;
+      }
+    }
+
+    // Break initials — combine, deduplicate by name+breakType+date
+    if (remote.initials && remote.initials.length) {
+      var seen = {};
+      var combined = [];
+      ((local.initials || []).concat(remote.initials)).forEach(function(e) {
+        var key = (e.name||'')+'|'+(e.breakType||'')+'|'+(e.date||'');
+        if (!seen[key]) { seen[key] = true; combined.push(e); }
+      });
+      if (combined.length > (local.initials || []).length) {
+        local.initials = combined;
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      lsSetJSON(psiKey(psiId), local);
+      if (typeof renderDashboard === 'function') renderDashboard();
+      else if (typeof refreshDash === 'function') refreshDash();
+    }
+  });
+}
+
 // ─── PDF WITH REMOTE SIGS ─────────────────────────────────────
 // Fetches strokes from sigs/{psiId}, merges with any local sigs,
 // then calls buildPDF so the PDF has every signer's drawing
@@ -292,6 +345,7 @@ function startFirebaseSync() {
         } else {
           lsSetJSON(psiKey(data.id), mergePSI(data, lsGetJSON(psiKey(data.id), null)));
           addToIndex(data.id);
+          syncSigsForPSI(data.id);
         }
         changed = true;
       }
@@ -360,6 +414,7 @@ function _startSyncAfterAuth() {
       } else {
         lsSetJSON(psiKey(data.id), mergePSI(data, lsGetJSON(psiKey(data.id), null)));
         addToIndex(data.id);
+        syncSigsForPSI(data.id);
       }
     });
     if (typeof refreshDash === 'function') refreshDash();
