@@ -38,6 +38,25 @@ if (firebaseConfig.apiKey) {
   }
 }
 
+// ─── ANONYMOUS AUTH ───────────────────────────────────────────
+// Signs each device in silently — required for secure Firestore rules.
+// Workers see no login prompt; Firebase just verifies the request
+// comes from a real app session (not an external API call).
+function ensureFirebaseAuth(callback) {
+  if (!firebase.apps.length || !db) { if (callback) callback(); return; }
+  var auth = firebase.auth();
+  auth.onAuthStateChanged(function(user) {
+    if (user) {
+      if (callback) callback();
+    } else {
+      auth.signInAnonymously().catch(function(e) {
+        console.warn('Anonymous auth failed:', e);
+        if (callback) callback();  // proceed anyway (open rules fallback)
+      });
+    }
+  });
+}
+
 
 // ─── MIRROR WRITES (fire-and-forget) ─────────────────────────
 // Called after every localStorage write — silently syncs to Firestore
@@ -189,6 +208,13 @@ function startFirebaseSync() {
 function initFirebaseSync() {
   if (!db) return;   // Firebase not configured yet
 
+  // Sign in anonymously first, then start sync
+  ensureFirebaseAuth(function() {
+    _startSyncAfterAuth();
+  });
+}
+
+function _startSyncAfterAuth() {
   // Pull all PSIs from Firestore → populate localStorage first
   db.collection('psis').get().then(function(snapshot) {
     snapshot.forEach(function(doc) {
