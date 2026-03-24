@@ -92,6 +92,22 @@ function firebaseSaveSupervisor(cfg) {
   } catch(e) {}
 }
 
+function firebaseSaveTemplateOverrides(obj) {
+  if (!db) return;
+  try {
+    var clean = JSON.parse(JSON.stringify(obj));
+    db.collection('config').doc('templateOverrides').set({ data: clean }).catch(function() {});
+  } catch(e) {}
+}
+
+function firebaseSaveTriggerOverrides(obj) {
+  if (!db) return;
+  try {
+    var clean = JSON.parse(JSON.stringify(obj));
+    db.collection('config').doc('triggerOverrides').set({ data: clean }).catch(function() {});
+  } catch(e) {}
+}
+
 function firebaseSaveLearned(obj) {
   if (!db) return;
   try {
@@ -182,6 +198,25 @@ function startFirebaseSync() {
     }
   }, function() {});
 
+  // Template overrides
+  db.collection('config').doc('templateOverrides').onSnapshot(function(doc) {
+    if (!doc.exists) return;
+    var data = doc.data();
+    if (data && data.data) {
+      localStorage.setItem('psi_template_full_overrides', JSON.stringify(data.data));
+      if (typeof applyTemplateOverrides === 'function') applyTemplateOverrides();
+    }
+  }, function() {});
+
+  db.collection('config').doc('triggerOverrides').onSnapshot(function(doc) {
+    if (!doc.exists) return;
+    var data = doc.data();
+    if (data && data.data) {
+      localStorage.setItem('psi_trigger_overrides', JSON.stringify(data.data));
+      if (typeof applyTemplateOverrides === 'function') applyTemplateOverrides();
+    }
+  }, function() {});
+
   // Signatures — sync crew signatures to all devices
   db.collection('signatures').onSnapshot(function(snapshot) {
     snapshot.docChanges().forEach(function(change) {
@@ -226,6 +261,26 @@ function initFirebaseSync() {
   });
 }
 
+// Remove ghost PSIs (submitted but empty — leftover from testing)
+function cleanGhostPSIs() {
+  if (!db) return;
+  db.collection('psis').get().then(function(snapshot) {
+    snapshot.forEach(function(doc) {
+      var data = doc.data();
+      if (!data) return;
+      // Ghost = submitted/no taskDesc, or completely empty record
+      if (!data.taskDesc && !data.deleted) {
+        db.collection('psis').doc(doc.id).set(
+          { id: doc.id, deleted: true, deletedAt: Date.now() },
+          { merge: true }
+        ).catch(function() {});
+        lsDel(psiKey(doc.id));
+        removeFromIndex(doc.id);
+      }
+    });
+  }).catch(function() {});
+}
+
 function _startSyncAfterAuth() {
   db.collection('psis').get().then(function(snapshot) {
     snapshot.forEach(function(doc) {
@@ -245,6 +300,23 @@ function _startSyncAfterAuth() {
   db.collection('config').doc('supervisor').get().then(function(doc) {
     if (doc.exists && doc.data()) lsSetJSON(SUPERVISOR_CFG_KEY, doc.data());
   }).catch(function() {});
+
+  db.collection('config').doc('templateOverrides').get().then(function(doc) {
+    if (doc.exists && doc.data() && doc.data().data) {
+      localStorage.setItem('psi_template_full_overrides', JSON.stringify(doc.data().data));
+      if (typeof applyTemplateOverrides === 'function') applyTemplateOverrides();
+    }
+  }).catch(function() {});
+
+  db.collection('config').doc('triggerOverrides').get().then(function(doc) {
+    if (doc.exists && doc.data() && doc.data().data) {
+      localStorage.setItem('psi_trigger_overrides', JSON.stringify(doc.data().data));
+      if (typeof applyTemplateOverrides === 'function') applyTemplateOverrides();
+    }
+  }).catch(function() {});
+
+  // Clean up ghost PSIs from testing (empty submitted records)
+  cleanGhostPSIs();
 
   db.collection('config').doc('learned').get().then(function(doc) {
     if (doc.exists && doc.data() && doc.data().data) {

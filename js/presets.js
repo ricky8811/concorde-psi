@@ -11,6 +11,7 @@ function loadTriggerOverrides() {
 }
 function saveTriggerOverrides(obj) {
   localStorage.setItem(TRIGGER_OVERRIDES_KEY, JSON.stringify(obj));
+  if (typeof firebaseSaveTriggerOverrides === 'function') firebaseSaveTriggerOverrides(obj);
 }
 
 function loadFullOverrides() {
@@ -18,6 +19,7 @@ function loadFullOverrides() {
 }
 function saveFullOverrides(obj) {
   localStorage.setItem(TEMPLATE_FULL_KEY, JSON.stringify(obj));
+  if (typeof firebaseSaveTemplateOverrides === 'function') firebaseSaveTemplateOverrides(obj);
 }
 
 
