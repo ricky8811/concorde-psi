@@ -232,7 +232,8 @@ function startFirebaseSync() {
         try {
           var strokes = JSON.parse(data.strokes || '[]');
           if (typeof saveSignatureToMem === 'function') {
-            saveSignatureToMem(data.name, strokes, data.png || '');
+            // Pass skipFirebase=true to avoid circular write loop
+            saveSignatureToMem(data.name, strokes, data.png || '', true);
           }
         } catch(e) {}
       }

@@ -94,17 +94,31 @@ function bumpUsage(code) {
   saveMem(m);
 }
 
-function saveSignatureToMem(name, strokes, png) {
+function _sigKey(name) {
+  return 'psi_sig_' + name.trim().toLowerCase().replace(/\s+/g, '_');
+}
+
+// skipFirebase = true when called from Firebase sync listener (avoids circular writes)
+function saveSignatureToMem(name, strokes, png, skipFirebase) {
   if (!name || !strokes) return;
+  // Store in dedicated per-person key so signatures survive unrelated MEM_KEY writes
+  lsSetJSON(_sigKey(name), { strokes: strokes, png: png || '' });
+  // Also keep MEM_KEY copy for any legacy reads
   const m = loadMem();
   if (!m.savedSigs) m.savedSigs = {};
-  m.savedSigs[name.trim()] = { strokes, png };
+  m.savedSigs[name.trim()] = { strokes: strokes, png: png || '' };
   saveMem(m);
-  if (typeof firebaseSaveSignature === 'function') firebaseSaveSignature(name, strokes, png);
+  if (!skipFirebase && typeof firebaseSaveSignature === 'function') {
+    firebaseSaveSignature(name, strokes, png);
+  }
 }
 
 function loadSignatureFromMem(name) {
   if (!name) return null;
+  // Check dedicated key first (most reliable)
+  const direct = lsGetJSON(_sigKey(name), null);
+  if (direct && direct.strokes && direct.strokes.length) return direct;
+  // Fall back to MEM_KEY for backward compat
   const m = loadMem();
   return (m.savedSigs && m.savedSigs[name.trim()]) || null;
 }

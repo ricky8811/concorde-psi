@@ -122,7 +122,6 @@ window.addEventListener('unhandledrejection', function(e) {
 function updateDateline() {
   const hdDate  = document.getElementById('hdDate');
   const hdShift = document.getElementById('hdShift');
-  const hdOpen  = document.getElementById('hdOpenCount');
 
   if (hdDate) {
     const d = new Date();
@@ -135,16 +134,6 @@ function updateDateline() {
     hdShift.textContent = (typeof formatShiftStatus === 'function')
       ? formatShiftStatus()
       : (lsGet(SHIFT_KEY) ? 'Shift · ' + lsGet(SHIFT_KEY) : '');
-  }
-
-  if (hdOpen) {
-    const idx    = loadIndex();
-    let openCount = 0;
-    idx.forEach(function(id) {
-      const p = loadPSI(id);
-      if (p && !p.approved) openCount++;
-    });
-    hdOpen.textContent = openCount > 0 ? openCount + ' open PSI' + (openCount !== 1 ? 's' : '') : '';
   }
 }
 
