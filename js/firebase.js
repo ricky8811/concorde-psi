@@ -145,8 +145,14 @@ function startFirebaseSync() {
       var data = change.doc.data();
       if (!data || !data.id) return;
       if (change.type === 'added' || change.type === 'modified') {
-        lsSetJSON(psiKey(data.id), data);
-        addToIndex(data.id);
+        if (data.deleted) {
+          // Soft-deleted — remove from local storage so it stops showing up
+          lsDel(psiKey(data.id));
+          removeFromIndex(data.id);
+        } else {
+          lsSetJSON(psiKey(data.id), data);
+          addToIndex(data.id);
+        }
         changed = true;
       }
       if (change.type === 'removed') {
@@ -261,44 +267,16 @@ function initFirebaseSync() {
   });
 }
 
-// Remove ghost PSIs (submitted but empty — leftover from testing)
-function cleanGhostPSIs() {
-  if (!db) return;
-  db.collection('psis').get().then(function(snapshot) {
-    var cleaned = false;
-    snapshot.forEach(function(doc) {
-      var data = doc.data();
-      if (!data || data.deleted || data.approved) return;
-      // Ghost detection:
-      // 1. No task description at all
-      // 2. Submitted but no signatures AND no workers with names
-      // 3. Submitted but no signatures AND created more than 2 days ago
-      var workerCount = (data.workers || []).filter(function(w) { return w && w.name; }).length;
-      var sigCount    = Object.keys(data.sigs || {}).length;
-      var ageMs       = Date.now() - (data.createdAt || 0);
-      var twoDaysMs   = 2 * 24 * 60 * 60 * 1000;
-      var isGhost = !data.taskDesc ||
-                    (data.submittedForApproval && sigCount === 0 && workerCount === 0) ||
-                    (data.submittedForApproval && sigCount === 0 && ageMs > twoDaysMs);
-      if (isGhost) {
-        db.collection('psis').doc(doc.id).set(
-          { id: doc.id, deleted: true, deletedAt: Date.now() },
-          { merge: true }
-        ).catch(function() {});
-        lsDel(psiKey(doc.id));
-        removeFromIndex(doc.id);
-        cleaned = true;
-      }
-    });
-    if (cleaned && typeof refreshDash === 'function') refreshDash();
-  }).catch(function() {});
-}
-
 function _startSyncAfterAuth() {
   db.collection('psis').get().then(function(snapshot) {
     snapshot.forEach(function(doc) {
       var data = doc.data();
-      if (data && data.id) {
+      if (!data || !data.id) return;
+      if (data.deleted) {
+        // Ensure soft-deleted PSIs are removed locally
+        lsDel(psiKey(data.id));
+        removeFromIndex(data.id);
+      } else {
         lsSetJSON(psiKey(data.id), data);
         addToIndex(data.id);
       }
@@ -327,9 +305,6 @@ function _startSyncAfterAuth() {
       if (typeof applyTriggerOverrides === 'function') applyTriggerOverrides();
     }
   }).catch(function() {});
-
-  // Clean up ghost PSIs from testing (empty submitted records)
-  cleanGhostPSIs();
 
   db.collection('config').doc('learned').get().then(function(doc) {
     if (doc.exists && doc.data() && doc.data().data) {
