@@ -213,6 +213,17 @@ function confirmSig() {
   cancelSig();
   renderSigPanel();
   schedSave();
+
+  // Push strokes to sigs/{psiId} so any device can generate a complete PDF
+  if (me.activePSI && typeof firebaseSavePSISigs === 'function') {
+    var _sigWorker = worker ? worker.name : '';
+    var _sigEntry  = {};
+    _sigEntry[String(_activeSigIdx !== null ? _activeSigIdx : 0)] = {
+      name: _sigWorker, strokes: strokes
+    };
+    firebaseSavePSISigs(me.activePSI, { workers: _sigEntry });
+  }
+
   toast('✓ Signature saved');
 }
 
@@ -537,6 +548,15 @@ function confirmQuickSign() {
       });
     });
     writePSI(psi);
+
+    // Push initials strokes to sigs/{psiId}
+    if (typeof firebaseSavePSISigs === 'function') {
+      var _initData = (psi.initials || []).map(function(e) {
+        return { name: e.name, breakType: e.breakType, date: e.date,
+                 time: e.time, strokes: e.strokes || [] };
+      });
+      firebaseSavePSISigs(psi.id, { initials: _initData });
+    }
   }
 
   cancelQuickSign();

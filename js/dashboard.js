@@ -265,7 +265,7 @@ function renderPSICard(psi, isHist) {
     draftBtn.className   = 'psi-draft-btn';
     draftBtn.textContent = '↓ PDF';
     draftBtn.title       = 'Download draft PDF';
-    draftBtn.onclick     = function(e) { e.stopPropagation(); buildPDF(loadPSI(psi.id), { isFinal: false }); };
+    draftBtn.onclick     = function(e) { e.stopPropagation(); buildPDFWithSigs(loadPSI(psi.id), { isFinal: false }); };
     right.appendChild(draftBtn);
 
     // Duplicate — supervisor or owner
@@ -578,7 +578,7 @@ function reopenPSI(id) {
 function redownload(id) {
   const psi = loadPSI(id);
   if (!psi) { toast('PSI not found'); return; }
-  buildPDF(psi, { isFinal: true });
+  buildPDFWithSigs(psi, { isFinal: true });
 }
 
 
@@ -677,11 +677,16 @@ function doApprove() {
     recordHazardHistory(psi.jobCode, psi.hazards || [], psi.customHazards || []);
   }
 
+  // Push supervisor strokes to sigs/{psiId} for cross-device PDF
+  if (typeof firebaseSavePSISigs === 'function') {
+    firebaseSavePSISigs(psi.id, { supervisor: { name: name, strokes: strokes } });
+  }
+
   closeApproveModal();
   refreshDash();
 
-  // Generate PDF
-  buildPDF(psi, { isFinal: true, supStrokes: strokes, supPng: png });
+  // Generate PDF — fetches all signers' strokes from Firestore first
+  buildPDFWithSigs(psi, { isFinal: true, supStrokes: strokes, supPng: png });
   toast('✅ PSI approved');
 }
 

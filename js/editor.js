@@ -1072,9 +1072,14 @@ function approvePSI() {
     supSigPng:     png,
   });
 
+  // Push supervisor strokes to sigs/{psiId} so any device can generate a complete PDF
+  if (typeof firebaseSavePSISigs === 'function') {
+    firebaseSavePSISigs(me.activePSI, { supervisor: { name: name, strokes: strokes } });
+  }
+
   const psi = loadPSI(me.activePSI);
   saveLearnedTemplate(psi);
-  buildPDF(psi, { isFinal: true, supStrokes: strokes, supPng: png });
+  buildPDFWithSigs(psi, { isFinal: true, supStrokes: strokes, supPng: png });
   toast('✅ PSI approved and PDF downloaded');
 
   setTimeout(function() { edBack(); }, 500);

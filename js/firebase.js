@@ -50,23 +50,18 @@ function firebaseWritePSI(record) {
   if (!db || !record || !record.id) return;
   try {
     var clean = JSON.parse(JSON.stringify(record));
-    // Strip PNG data URLs only — they are 50-200 KB each and bust the 1 MB
-    // Firestore document limit.  Strokes are kept (3-5 KB each) so any device
-    // can regenerate the PDF with every signer's drawing via drawSigLines().
-    if (clean.sigs && typeof clean.sigs === 'object') {
-      Object.keys(clean.sigs).forEach(function(k) {
-        if (clean.sigs[k]) delete clean.sigs[k].png;
-      });
-    }
+    // Signature drawings live in sigs/{psiId} collection — never inside the PSI document.
+    // This keeps PSI documents small and prevents size-limit failures.
+    delete clean.sigs;
+    delete clean.supSigStrokes;
     delete clean.supSigPng;
+    // Strip strokes from initials — keep only metadata for display
     if (Array.isArray(clean.initials)) {
       clean.initials = clean.initials.map(function(e) {
-        // keep strokes for PDF; strip png
-        return { name: e.name, time: e.time, date: e.date, breakType: e.breakType,
-                 strokes: e.strokes || [] };
+        return { name: e.name, time: e.time, date: e.date, breakType: e.breakType };
       });
     }
-    // Convenience list so other devices can show "2/3 signed" without iterating sigs
+    // Store who has signed (names) so other devices can show "2/3 signed" status
     var workers = record.workers || [];
     clean.sigWorkers = Object.keys(record.sigs || {}).map(function(k) {
       return (workers[parseInt(k)] || {}).name || '';
@@ -153,6 +148,75 @@ function firebaseSaveCrew(crew) {
   } catch(e) {}
 }
 
+// ─── PSI SIGNATURES COLLECTION ────────────────────────────────
+// Strokes for every signer live here, keyed by PSI ID.
+// Structure: { workers: { "0": {name, strokes}, "1": ... },
+//              supervisor: { name, strokes },
+//              initials: [{ name, breakType, date, time, strokes }] }
+
+function firebaseSavePSISigs(psiId, data) {
+  if (!db || !psiId || !data) return;
+  try {
+    var clean = JSON.parse(JSON.stringify(data));
+    // merge:true so updating worker 0 doesn't wipe worker 1's existing entry
+    db.collection('sigs').doc(psiId).set(clean, { merge: true }).catch(function() {});
+  } catch(e) {}
+}
+
+function firebaseLoadPSISigs(psiId) {
+  if (!db || !psiId) return Promise.resolve(null);
+  return db.collection('sigs').doc(psiId).get().then(function(doc) {
+    return doc.exists ? doc.data() : null;
+  }).catch(function() { return null; });
+}
+
+// ─── PDF WITH REMOTE SIGS ─────────────────────────────────────
+// Fetches strokes from sigs/{psiId}, merges with any local sigs,
+// then calls buildPDF so the PDF has every signer's drawing
+// regardless of which device is generating it.
+
+function buildPDFWithSigs(psi, opts) {
+  if (!psi) return;
+  opts = opts || {};
+  firebaseLoadPSISigs(psi.id).then(function(remote) {
+    var merged = Object.assign({}, psi);
+    if (remote) {
+      // Worker sigs — fill in any slots missing from local
+      if (remote.workers) {
+        if (!merged.sigs) merged.sigs = {};
+        Object.keys(remote.workers).forEach(function(k) {
+          var r = remote.workers[k];
+          var l = (psi.sigs || {})[k];
+          if (!(l && l.strokes && l.strokes.length) && r && r.strokes && r.strokes.length) {
+            merged.sigs[k] = r;
+          }
+        });
+      }
+      // Supervisor sig
+      if (remote.supervisor && remote.supervisor.strokes && remote.supervisor.strokes.length) {
+        if (!opts.supStrokes || !opts.supStrokes.length) {
+          opts.supStrokes = remote.supervisor.strokes;
+        }
+        if (!merged.supSigStrokes || !merged.supSigStrokes.length) {
+          merged.supSigStrokes = remote.supervisor.strokes;
+        }
+      }
+      // Break initials — combine, dedup by name+breakType+date
+      if (remote.initials && remote.initials.length) {
+        var seen = {};
+        var combined = [];
+        ((psi.initials || []).concat(remote.initials)).forEach(function(e) {
+          var key = (e.name||'')+'|'+(e.breakType||'')+'|'+(e.date||'');
+          if (!seen[key]) { seen[key] = true; combined.push(e); }
+        });
+        merged.initials = combined;
+      }
+    }
+    buildPDF(merged, opts);
+  });
+}
+
+
 function firebaseSaveSignature(name, strokes, png) {
   if (!db || !name) return;
   try {
@@ -176,50 +240,16 @@ function firebaseSaveSignature(name, strokes, png) {
 // PNG fields are local-only and never stored in Firestore.
 
 function mergePSI(remote, local) {
+  // Firestore is authoritative for all job data and status flags.
+  // Sig drawings are NOT in Firestore (they live in sigs/{psiId}).
+  // Preserve any local sig drawings so on-screen display stays correct.
   var merged = Object.assign({}, remote);
-
-  if (!local) return merged;
-
-  // Worker sigs — per-index merge
-  var remoteSigs = remote.sigs  || {};
-  var localSigs  = local.sigs   || {};
-  var allKeys    = Object.keys(Object.assign({}, remoteSigs, localSigs));
-  var mergedSigs = {};
-  allKeys.forEach(function(k) {
-    var r = remoteSigs[k];
-    var l = localSigs[k];
-    if (l && l.strokes && l.strokes.length) {
-      // Local is best — has PNG too
-      mergedSigs[k] = l;
-    } else if (r && r.strokes && r.strokes.length) {
-      // Came from another device via Firestore — strokes only, no PNG
-      mergedSigs[k] = r;
-    } else if (l || r) {
-      mergedSigs[k] = l || r;
-    }
-  });
-  merged.sigs = mergedSigs;
-
-  // Supervisor sig — prefer local (has PNG); fall back to Firestore strokes
-  if (local.supSigStrokes && local.supSigStrokes.length) {
-    merged.supSigStrokes = local.supSigStrokes;
-    merged.supSigPng     = local.supSigPng || '';
+  if (local) {
+    if (local.sigs && Object.keys(local.sigs).length)     merged.sigs          = local.sigs;
+    if (local.supSigStrokes && local.supSigStrokes.length) merged.supSigStrokes = local.supSigStrokes;
+    if (local.supSigPng)                                   merged.supSigPng     = local.supSigPng;
+    if (local.initials && local.initials.length)           merged.initials      = local.initials;
   }
-
-  // Break initials — combine unique entries; prefer local (has PNG+strokes)
-  var remoteInits = remote.initials  || [];
-  var localInits  = local.initials   || [];
-  if (localInits.length || remoteInits.length) {
-    var seen = {};
-    var combined = [];
-    // Local first (better quality)
-    localInits.concat(remoteInits).forEach(function(entry) {
-      var key = (entry.name || '') + '|' + (entry.breakType || '') + '|' + (entry.date || '');
-      if (!seen[key]) { seen[key] = true; combined.push(entry); }
-    });
-    merged.initials = combined;
-  }
-
   return merged;
 }
 
