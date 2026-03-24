@@ -154,10 +154,41 @@ function firebaseSaveCrew(crew) {
 //              supervisor: { name, strokes },
 //              initials: [{ name, breakType, date, time, strokes }] }
 
+// Firestore does not support arrays-of-arrays (points: [[x,y],[x,y]...]).
+// Strokes are JSON-stringified before saving and parsed back on load.
+function _encodeStrokesForFirestore(entry) {
+  if (!entry) return entry;
+  var out = Object.assign({}, entry);
+  if (Array.isArray(out.strokes)) out.strokes = JSON.stringify(out.strokes);
+  return out;
+}
+function _decodeStrokesFromFirestore(entry) {
+  if (!entry) return entry;
+  var out = Object.assign({}, entry);
+  if (typeof out.strokes === 'string') {
+    try { out.strokes = JSON.parse(out.strokes); } catch(e) { out.strokes = []; }
+  }
+  return out;
+}
+
 function firebaseSavePSISigs(psiId, data) {
   if (!db || !psiId || !data) return;
   try {
     var clean = JSON.parse(JSON.stringify(data));
+
+    // Encode strokes as JSON strings so Firestore doesn't mangle nested arrays
+    if (clean.workers) {
+      Object.keys(clean.workers).forEach(function(k) {
+        clean.workers[k] = _encodeStrokesForFirestore(clean.workers[k]);
+      });
+    }
+    if (clean.supervisor) {
+      clean.supervisor = _encodeStrokesForFirestore(clean.supervisor);
+    }
+    if (clean.initials) {
+      clean.initials = clean.initials.map(_encodeStrokesForFirestore);
+    }
+
     if (clean.initials && clean.initials.length) {
       // Use arrayUnion so each device's initials accumulate — never overwrite others
       var update = {};
@@ -168,7 +199,6 @@ function firebaseSavePSISigs(psiId, data) {
       );
       db.collection('sigs').doc(psiId).set(update, { merge: true }).catch(function() {});
     } else {
-      // No initials — plain merge is fine
       db.collection('sigs').doc(psiId).set(clean, { merge: true }).catch(function() {});
     }
   } catch(e) {}
@@ -177,7 +207,22 @@ function firebaseSavePSISigs(psiId, data) {
 function firebaseLoadPSISigs(psiId) {
   if (!db || !psiId) return Promise.resolve(null);
   return db.collection('sigs').doc(psiId).get().then(function(doc) {
-    return doc.exists ? doc.data() : null;
+    if (!doc.exists) return null;
+    var data = doc.data();
+    if (!data) return null;
+    // Decode strokes back from JSON strings to arrays
+    if (data.workers) {
+      Object.keys(data.workers).forEach(function(k) {
+        data.workers[k] = _decodeStrokesFromFirestore(data.workers[k]);
+      });
+    }
+    if (data.supervisor) {
+      data.supervisor = _decodeStrokesFromFirestore(data.supervisor);
+    }
+    if (Array.isArray(data.initials)) {
+      data.initials = data.initials.map(_decodeStrokesFromFirestore);
+    }
+    return data;
   }).catch(function() { return null; });
 }
 
