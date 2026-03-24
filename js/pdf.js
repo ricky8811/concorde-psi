@@ -148,10 +148,18 @@ async function buildPDF(psi, opts) {
     // 10. Flatten the form so signatures draw on top cleanly
     form.flatten();
 
-    // 11. Draw worker signatures as crisp vector lines
+    // 11. Draw worker signatures as crisp vector lines (name-matched, index fallback)
     const sigs = psi.sigs || {};
     for (let i = 0; i < Math.min(workers.length, 4); i++) {
-      const sig = sigs[i];
+      const wName = (workers[i].name || '').trim().toLowerCase();
+      let sig = null;
+      if (wName) {
+        const k = Object.keys(sigs).find(function(k) {
+          return (sigs[k].name || '').trim().toLowerCase() === wName;
+        });
+        if (k !== undefined) sig = sigs[k];
+      }
+      if (!sig) sig = sigs[i];
       if (!sig || !sig.strokes) continue;
       drawSigLines(page, sig.strokes, SIG_RECTS['worker_' + (i + 1)], rgb);
     }

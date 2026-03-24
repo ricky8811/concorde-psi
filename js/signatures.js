@@ -200,7 +200,7 @@ function confirmSig() {
   const strokes = (_sigStrokes['sigCanvas'] || []).slice();
   const png     = canvasToPNG('sigCanvas');
 
-  st.sigs[_activeSigIdx] = { strokes: strokes, png: png };
+  st.sigs[_activeSigIdx] = { name: worker ? worker.name : '', strokes: strokes, png: png };
 
   const workers = st.workers.filter(function(w) { return w.name && w.name.trim(); });
   const worker  = workers[_activeSigIdx];
@@ -660,7 +660,7 @@ function confirmQuickWorkerSign() {
   if (idx < 0) idx = Object.keys(psi.sigs || {}).length;
 
   if (!psi.sigs) psi.sigs = {};
-  psi.sigs[idx] = { strokes: strokes, png: png };
+  psi.sigs[idx] = { name: name, strokes: strokes, png: png };
 
   saveSignatureToMem(name, strokes, png);
   writePSI(psi);
