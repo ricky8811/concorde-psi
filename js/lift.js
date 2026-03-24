@@ -109,18 +109,38 @@ function renderLiftBar() {
   keys.forEach(function(key) {
     const f = fleet[key];
     const insp = _liftData.units[key];
-    const chip = document.createElement('button');
 
     var label = f.unitNum || key;
     if (insp && insp.status === 'submitted') label += ' ⏳';
     else if (insp && insp.status === 'approved') label += ' ✓';
     else if (insp) label += ' •';
 
+    // Wrapper holds the chip + edit + delete buttons
+    const wrap = document.createElement('div');
+    wrap.className = 'unit-chip-wrap';
+
+    const chip = document.createElement('button');
     chip.className   = 'unit-chip' + (_curLift === key ? ' active' : '');
     chip.textContent = label;
     chip.title       = f.make || '';
-    chip.onclick     = function() { liftStartInspection(key); };
-    bar.appendChild(chip);
+    chip.onclick     = (function(k) { return function() { liftStartInspection(k); }; })(key);
+
+    const editBtn = document.createElement('button');
+    editBtn.className   = 'unit-chip-icon';
+    editBtn.textContent = '✏';
+    editBtn.title       = 'Edit lift';
+    editBtn.onclick     = (function(k) { return function() { openEditLiftModal(k); }; })(key);
+
+    const delBtn = document.createElement('button');
+    delBtn.className   = 'unit-chip-icon unit-chip-del';
+    delBtn.textContent = '×';
+    delBtn.title       = 'Remove from fleet';
+    delBtn.onclick     = (function(k) { return function() { liftRemoveFromFleet(k); }; })(key);
+
+    wrap.appendChild(chip);
+    wrap.appendChild(editBtn);
+    wrap.appendChild(delBtn);
+    bar.appendChild(wrap);
   });
 
   // ＋ Add Lift to Fleet
@@ -134,7 +154,14 @@ function renderLiftBar() {
 
 // ── OPEN / CLOSE ADD-LIFT MODAL ───────────────────────────────
 
+var _editLiftKey = null;
+
 function openAddLiftModal() {
+  _editLiftKey = null;
+  var titleEl = document.querySelector('#addLiftModal .modal-title');
+  if (titleEl) titleEl.textContent = 'Add Lift to Fleet';
+  var confirmBtn = document.querySelector('#addLiftModal .btn-accent');
+  if (confirmBtn) { confirmBtn.textContent = 'Add to Fleet'; confirmBtn.onclick = confirmAddLift; }
   var el = document.getElementById('addLiftModal');
   if (el) { el.style.display = 'flex'; }
   var inp = document.getElementById('addLiftUnit');
@@ -163,6 +190,43 @@ function confirmAddLift() {
   renderLiftBar();
   liftStartInspection(key);
   toast('✓ ' + unitNum + ' added to fleet');
+}
+
+function openEditLiftModal(key) {
+  var fleet = loadFleet();
+  var f = fleet[key] || {};
+  _editLiftKey = key;
+  var titleEl = document.querySelector('#addLiftModal .modal-title');
+  if (titleEl) titleEl.textContent = 'Edit Lift';
+  var confirmBtn = document.querySelector('#addLiftModal .btn-accent');
+  if (confirmBtn) { confirmBtn.textContent = 'Save Changes'; confirmBtn.onclick = confirmEditLift; }
+  var el = document.getElementById('addLiftModal');
+  if (el) el.style.display = 'flex';
+  var inp = document.getElementById('addLiftUnit');
+  if (inp) { inp.value = f.unitNum || ''; inp.focus(); }
+  var mk = document.getElementById('addLiftMake');
+  if (mk) mk.value = f.make || '';
+}
+
+function confirmEditLift() {
+  if (!_editLiftKey) return;
+  var unitNum = (document.getElementById('addLiftUnit') || {}).value || '';
+  var make    = (document.getElementById('addLiftMake')  || {}).value || '';
+  unitNum = unitNum.trim();
+  if (!unitNum) { toast('Enter a unit number'); return; }
+  var fleet = loadFleet();
+  fleet[_editLiftKey] = { unitNum: unitNum, make: make.trim() };
+  // Also update the active inspection record if it exists
+  if (_liftData.units[_editLiftKey]) {
+    _liftData.units[_editLiftKey].unitNum = unitNum;
+    _liftData.units[_editLiftKey].make    = make.trim();
+    saveLift(_liftData);
+  }
+  saveFleet(fleet);
+  _editLiftKey = null;
+  closeAddLiftModal();
+  renderLiftBar();
+  toast('✓ Lift updated');
 }
 
 function liftRemoveFromFleet(key) {
@@ -608,31 +672,29 @@ function renderLiftHistory() {
     })(record);
     actions.appendChild(dlBtn);
 
-    // Supervisor: delete
-    if (me.role === 'supervisor') {
-      const delBtn = document.createElement('button');
-      delBtn.className   = 'btn btn-secondary btn-sm';
-      delBtn.style.color = 'var(--accent)';
-      delBtn.textContent = 'Delete';
-      delBtn.onclick     = (function(rec) {
-        return function() {
-          if (!confirm('Remove this inspection record?')) return;
-          var hist = loadLiftHistory();
-          var idx  = hist.findIndex(function(r) {
-            return r.unitKey === rec.unitKey && r.date === rec.date;
-          });
-          if (idx !== -1) {
-            hist[idx].deleted   = true;
-            hist[idx].deletedAt = Date.now();
-            hist[idx].deletedBy = me.name;
-            saveLiftHistory(hist);
-          }
-          renderLiftHistory();
-          toast('Record removed');
-        };
-      })(record);
-      actions.appendChild(delBtn);
-    }
+    // Delete — available to all
+    const delBtn = document.createElement('button');
+    delBtn.className   = 'btn btn-secondary btn-sm';
+    delBtn.style.color = 'var(--accent)';
+    delBtn.textContent = 'Delete';
+    delBtn.onclick     = (function(rec) {
+      return function() {
+        if (!confirm('Remove this inspection record?')) return;
+        var hist = loadLiftHistory();
+        var idx  = hist.findIndex(function(r) {
+          return r.unitKey === rec.unitKey && r.date === rec.date;
+        });
+        if (idx !== -1) {
+          hist[idx].deleted   = true;
+          hist[idx].deletedAt = Date.now();
+          hist[idx].deletedBy = me.name;
+          saveLiftHistory(hist);
+        }
+        renderLiftHistory();
+        toast('Record removed');
+      };
+    })(record);
+    actions.appendChild(delBtn);
 
     card.appendChild(actions);
     container.appendChild(card);
