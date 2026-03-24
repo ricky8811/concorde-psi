@@ -39,7 +39,11 @@ function showLiftTab(tab) {
   if (btn1) btn1.classList.toggle('active', tab === 'inspect');
   if (btn2) btn2.classList.toggle('active', tab === 'history');
 
-  if (tab === 'history') renderLiftHistory();
+  if (tab === 'history') {
+    // Pull latest history from Firestore on demand (not a continuous listener)
+    if (typeof firebaseLoadLiftHistory === 'function') firebaseLoadLiftHistory();
+    else renderLiftHistory();
+  }
 }
 
 

@@ -254,7 +254,24 @@ function mergePSI(remote, local) {
 }
 
 
+// ─── WRITE DEBOUNCE ───────────────────────────────────────────
+// Firestore writes are debounced per PSI — max 1 write per 5 seconds.
+// localStorage always saves immediately (no change to UX).
+var _fbWriteTimers = {};
+
+function firebaseWritePSIDebounced(record) {
+  if (!record || !record.id) return;
+  clearTimeout(_fbWriteTimers[record.id]);
+  var snap = JSON.parse(JSON.stringify(record)); // capture current state
+  _fbWriteTimers[record.id] = setTimeout(function() {
+    firebaseWritePSI(snap);
+  }, 5000);
+}
+
 // ─── SYNC LISTENERS (Firestore → localStorage → UI) ──────────
+// Only PSIs and current lift use real-time onSnapshot listeners.
+// Everything else (config, signatures, lift history) uses one-time
+// get() calls on startup to avoid burning through daily read quota.
 
 var _syncStarted = false;
 
@@ -262,7 +279,7 @@ function startFirebaseSync() {
   if (!db || _syncStarted) return;
   _syncStarted = true;
 
-  // PSI sync
+  // PSI sync — real-time so all devices see new/changed PSIs instantly
   db.collection('psis').onSnapshot(function(snapshot) {
     var changed = false;
     snapshot.docChanges().forEach(function(change) {
@@ -290,7 +307,7 @@ function startFirebaseSync() {
     }
   }, function() {});
 
-  // Lift current data
+  // Lift current data — real-time so inspection progress syncs instantly
   db.collection('lift').doc('current').onSnapshot(function(doc) {
     if (!doc.exists) return;
     var data = doc.data();
@@ -303,103 +320,23 @@ function startFirebaseSync() {
     if (typeof updatePendingBadge === 'function') updatePendingBadge();
   }, function() {});
 
-  // Personnel
-  db.collection('config').doc('personnel').onSnapshot(function(doc) {
-    if (!doc.exists) return;
-    var data = doc.data();
-    if (data && data.list) lsSetJSON(PERSONNEL_KEY, data.list);
-  }, function() {});
+  // All other data (config, signatures, lift history) is loaded once at
+  // startup via get() in _startSyncAfterAuth — no continuous listeners needed.
+}
 
-  // Supervisor config
-  db.collection('config').doc('supervisor').onSnapshot(function(doc) {
-    if (!doc.exists) return;
-    var data = doc.data();
-    if (data) lsSetJSON(SUPERVISOR_CFG_KEY, data);
-  }, function() {});
-
-  // Learned templates
-  db.collection('config').doc('learned').onSnapshot(function(doc) {
-    if (!doc.exists) return;
-    var data = doc.data();
-    if (data && data.data) {
-      lsSetJSON(LEARN_KEY, data.data);
-      if (typeof applyTriggerOverrides === 'function') applyTriggerOverrides();
-    }
-  }, function() {});
-
-  // Template overrides
-  db.collection('config').doc('templateOverrides').onSnapshot(function(doc) {
-    if (!doc.exists) return;
-    var data = doc.data();
-    if (data && data.data) {
-      localStorage.setItem('psi_template_full_overrides', JSON.stringify(data.data));
-      if (typeof applyTriggerOverrides === 'function') applyTriggerOverrides();
-    }
-  }, function() {});
-
-  db.collection('config').doc('triggerOverrides').onSnapshot(function(doc) {
-    if (!doc.exists) return;
-    var data = doc.data();
-    if (data && data.data) {
-      localStorage.setItem('psi_trigger_overrides', JSON.stringify(data.data));
-      if (typeof applyTriggerOverrides === 'function') applyTriggerOverrides();
-    }
-  }, function() {});
-
-  // Lift fleet — unit numbers added on any device appear on all devices
-  db.collection('config').doc('liftFleet').onSnapshot(function(doc) {
-    if (!doc.exists) return;
-    var data = doc.data();
-    if (data && data.data) {
-      localStorage.setItem(LIFT_FLEET_KEY, JSON.stringify(data.data));
-      // Re-render the lift unit bar if the pane is currently open
-      var liftPane = document.getElementById('liftPane');
-      if (liftPane && liftPane.style.display !== 'none') {
-        if (typeof renderLiftBar === 'function') renderLiftBar();
-      }
-    }
-  }, function() {});
-
-  // Crew roster — additions/changes appear on all devices
-  db.collection('config').doc('crew').onSnapshot(function(doc) {
-    if (!doc.exists) return;
-    var data = doc.data();
-    if (data && data.data) lsSetJSON(CREW_KEY, data.data);
-  }, function() {});
-
-  // Signatures — sync crew signatures to all devices
-  db.collection('signatures').onSnapshot(function(snapshot) {
-    snapshot.docChanges().forEach(function(change) {
-      var data = change.doc.data();
-      if (!data || !data.name) return;
-      if (change.type === 'added' || change.type === 'modified') {
-        try {
-          var strokes = JSON.parse(data.strokes || '[]');
-          if (typeof saveSignatureToMem === 'function') {
-            // Pass skipFirebase=true to avoid circular write loop
-            saveSignatureToMem(data.name, strokes, data.png || '', true);
-          }
-        } catch(e) {}
-      }
-    });
-  }, function() {});
-
-  // Lift history
-  db.collection('lift_hist').onSnapshot(function(snapshot) {
+// Load lift history from Firestore on demand (called when lift history tab opens)
+function firebaseLoadLiftHistory() {
+  if (!db) return;
+  db.collection('lift_hist').get().then(function(snapshot) {
     var remoteHist = [];
     snapshot.forEach(function(doc) {
       var d = doc.data();
       if (d && !d.deleted) remoteHist.push(d);
     });
-    remoteHist.sort(function(a, b) {
-      return (b.archivedAt || 0) - (a.archivedAt || 0);
-    });
+    remoteHist.sort(function(a, b) { return (b.archivedAt || 0) - (a.archivedAt || 0); });
     lsSetJSON(LIFT_HIST_KEY, remoteHist);
-    var histTab = document.getElementById('liftTabHistory');
-    if (histTab && histTab.style.display !== 'none') {
-      if (typeof renderLiftHistory === 'function') renderLiftHistory();
-    }
-  }, function() {});
+    if (typeof renderLiftHistory === 'function') renderLiftHistory();
+  }).catch(function() {});
 }
 
 

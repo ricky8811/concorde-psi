@@ -64,7 +64,9 @@ function writePSI(record) {
   if (!record || !record.id) return;
   lsSetJSON(psiKey(record.id), record);
   addToIndex(record.id);
-  if (typeof firebaseWritePSI === 'function') firebaseWritePSI(record);
+  // Debounced: max 1 Firestore write per PSI per 5 seconds (saves daily write quota)
+  if (typeof firebaseWritePSIDebounced === 'function') firebaseWritePSIDebounced(record);
+  else if (typeof firebaseWritePSI === 'function') firebaseWritePSI(record);
 }
 
 function deletePSI(id) {
