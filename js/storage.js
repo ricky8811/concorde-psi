@@ -100,6 +100,7 @@ function saveSignatureToMem(name, strokes, png) {
   if (!m.savedSigs) m.savedSigs = {};
   m.savedSigs[name.trim()] = { strokes, png };
   saveMem(m);
+  if (typeof firebaseSaveSignature === 'function') firebaseSaveSignature(name, strokes, png);
 }
 
 function loadSignatureFromMem(name) {

@@ -100,6 +100,19 @@ function firebaseSaveLearned(obj) {
   } catch(e) {}
 }
 
+function firebaseSaveSignature(name, strokes, png) {
+  if (!db || !name) return;
+  try {
+    var docId = name.trim().toLowerCase().replace(/\s+/g, '_');
+    db.collection('signatures').doc(docId).set({
+      name: name.trim(),
+      strokes: JSON.stringify(strokes || []),
+      png: png || '',
+      updatedAt: Date.now()
+    }).catch(function() {});
+  } catch(e) {}
+}
+
 
 // ─── SYNC LISTENERS (Firestore → localStorage → UI) ──────────
 
@@ -167,6 +180,22 @@ function startFirebaseSync() {
       lsSetJSON(LEARN_KEY, data.data);
       if (typeof applyTemplateOverrides === 'function') applyTemplateOverrides();
     }
+  }, function() {});
+
+  // Signatures — sync crew signatures to all devices
+  db.collection('signatures').onSnapshot(function(snapshot) {
+    snapshot.docChanges().forEach(function(change) {
+      var data = change.doc.data();
+      if (!data || !data.name) return;
+      if (change.type === 'added' || change.type === 'modified') {
+        try {
+          var strokes = JSON.parse(data.strokes || '[]');
+          if (typeof saveSignatureToMem === 'function') {
+            saveSignatureToMem(data.name, strokes, data.png || '');
+          }
+        } catch(e) {}
+      }
+    });
   }, function() {});
 
   // Lift history

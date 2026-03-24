@@ -299,7 +299,8 @@ function renderPendCard(psi) {
   card.style.padding    = '12px 18px';
 
   card.onclick = function(e) {
-    if (e.target.classList.contains('psi-approve-btn')) return;
+    if (e.target.classList.contains('psi-approve-btn') ||
+        e.target.classList.contains('psi-del')) return;
     openPSI(psi.id);
   };
 
@@ -317,15 +318,24 @@ function renderPendCard(psi) {
   meta.appendChild(title);
   meta.appendChild(sub);
 
+  const right = document.createElement('div');
+  right.className = 'psi-right';
+  right.style.gap = '6px';
+
   const apBtn = document.createElement('button');
-  apBtn.className   = 'btn btn-green btn-sm';
+  apBtn.className   = 'psi-approve-btn';
   apBtn.textContent = '✅ Approve';
-  apBtn.style.marginLeft = 'auto';
-  apBtn.style.flexShrink = '0';
   apBtn.onclick = function(e) { e.stopPropagation(); openApproveModal(psi.id); };
+  right.appendChild(apBtn);
+
+  const delBtn = document.createElement('button');
+  delBtn.className   = 'psi-del';
+  delBtn.textContent = 'Delete';
+  delBtn.onclick = function(e) { e.stopPropagation(); deletePSIConfirm(psi.id, psi.taskDesc); };
+  right.appendChild(delBtn);
 
   card.appendChild(meta);
-  card.appendChild(apBtn);
+  card.appendChild(right);
   return card;
 }
 
