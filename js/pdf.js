@@ -21,6 +21,17 @@ const MEWP_PDF_B64 = 'JVBERi0xLjcNCiWhs8XXDQoxIDAgb2JqDQo8PC9BdXRob3I8RkVGRjAwND
 // ↑ PASTE MEWP PDF BASE64 HERE (replace the empty string above)
 
 
+// ── DATE HELPER ───────────────────────────────────────────────
+function fmtDateWords(isoStr) {
+  var months = ['January','February','March','April','May','June',
+                'July','August','September','October','November','December'];
+  var parts = (isoStr || todayISO()).split('-');
+  var m = parseInt(parts[1], 10) - 1;
+  var d = parseInt(parts[2], 10);
+  var y = parts[0];
+  return months[m] + ' ' + d + ' ' + y;
+}
+
 // ── BUILD PSI PDF ─────────────────────────────────────────────
 
 async function buildPDF(psi, opts) {
@@ -169,9 +180,10 @@ async function buildPDF(psi, opts) {
     const url      = URL.createObjectURL(blob);
 
     const jobCode = psi.jobCode || 'PSI';
-    const dateStr = (psi.jobDate || todayISO()).replace(/-/g, '');
+    const dateStr = fmtDateWords(psi.jobDate);
     const name    = (psi.createdBy || 'crew').replace(/\s+/g, '-');
-    const fname   = 'ConcordePSI-' + jobCode + '-' + dateStr + '-' + name + '.pdf';
+    const shortId = (psi.id || '').slice(0, 5);
+    const fname   = dateStr + ' - PSI ' + jobCode + ' ' + name + (shortId ? ' ' + shortId : '') + '.pdf';
 
     const a = document.createElement('a');
     a.href     = url;
@@ -314,9 +326,9 @@ async function buildMEWPPDF(unitData, sigStrokes, supStrokes) {
     const blob     = new Blob([outBytes], { type: 'application/pdf' });
     const url      = URL.createObjectURL(blob);
 
-    const dateStr = (unitData.date || todayISO()).replace(/-/g, '');
+    const dateStr = fmtDateWords(unitData.date);
     const unitStr = (unitData.unitNum || 'unit').replace(/\s+/g, '-');
-    const fname   = 'ConcordeMEWP-' + unitStr + '-' + dateStr + '.pdf';
+    const fname   = dateStr + ' - MEWP ' + unitStr + '.pdf';
 
     const a = document.createElement('a');
     a.href     = url;
