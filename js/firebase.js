@@ -240,42 +240,63 @@ function syncSigsForPSI(psiId) {
 // regardless of which device is generating it.
 
 function buildPDFWithSigs(psi, opts) {
-  if (!psi) return;
+  if (!psi || !psi.id) return;
   opts = opts || {};
-  firebaseLoadPSISigs(psi.id).then(function(remote) {
+
+  // Fetch BOTH the full PSI from Firestore AND the sigs collection in parallel.
+  // Fetching the PSI ensures tasks/hazards/workers/PPE are always current on any
+  // device — localStorage alone can be stale or incomplete on a second device.
+  var sigsPromise = firebaseLoadPSISigs(psi.id);
+  var psiPromise  = db
+    ? db.collection('psis').doc(psi.id).get().catch(function() { return null; })
+    : Promise.resolve(null);
+
+  Promise.all([sigsPromise, psiPromise]).then(function(results) {
+    var remoteSigs = results[0];
+    var psiSnap    = results[1];
+
+    // Start with local PSI (may have strokes from this device)
     var merged = Object.assign({}, psi);
-    if (remote) {
-      // Worker sigs — fill in any slots missing from local
-      if (remote.workers) {
+
+    // Overlay all content fields from Firestore PSI doc (authoritative source)
+    // This fixes tasks/hazards/workers/PPE missing on a second device
+    if (psiSnap && psiSnap.exists) {
+      var d = psiSnap.data() || {};
+      ['taskDesc','taskLoc','jobDate','jobTime','jobNumber','musterPoint',
+       'hazards','ppe','conditions','workers','taskStepsText','hazardText',
+       'controlText','tasks','weather','weatherTemp','weatherCode','weatherAdvisory',
+       'supName','approvedBy','createdBy','jobCode','approved','submittedForApproval'
+      ].forEach(function(f) {
+        if (d[f] !== undefined) merged[f] = d[f];
+      });
+    }
+
+    // Layer in sigs from sigs/{psiId} — these have the actual stroke drawings
+    if (remoteSigs) {
+      if (remoteSigs.workers) {
         if (!merged.sigs) merged.sigs = {};
-        Object.keys(remote.workers).forEach(function(k) {
-          var r = remote.workers[k];
+        Object.keys(remoteSigs.workers).forEach(function(k) {
+          var r = remoteSigs.workers[k];
           var l = (psi.sigs || {})[k];
-          if (!(l && l.strokes && l.strokes.length) && r && r.strokes && r.strokes.length) {
+          if (r && r.strokes && r.strokes.length && !(l && l.strokes && l.strokes.length)) {
             merged.sigs[k] = r;
           }
         });
       }
-      // Supervisor sig
-      if (remote.supervisor && remote.supervisor.strokes && remote.supervisor.strokes.length) {
-        if (!opts.supStrokes || !opts.supStrokes.length) {
-          opts.supStrokes = remote.supervisor.strokes;
-        }
-        if (!merged.supSigStrokes || !merged.supSigStrokes.length) {
-          merged.supSigStrokes = remote.supervisor.strokes;
-        }
+      if (remoteSigs.supervisor && remoteSigs.supervisor.strokes && remoteSigs.supervisor.strokes.length) {
+        if (!opts.supStrokes || !opts.supStrokes.length) opts.supStrokes = remoteSigs.supervisor.strokes;
+        if (!merged.supSigStrokes || !merged.supSigStrokes.length) merged.supSigStrokes = remoteSigs.supervisor.strokes;
       }
-      // Break initials — remote first so stroke-bearing entries win
-      if (remote.initials && remote.initials.length) {
-        var seen = {};
-        var combined = [];
-        (remote.initials.concat(psi.initials || [])).forEach(function(e) {
+      if (remoteSigs.initials && remoteSigs.initials.length) {
+        var seen = {}, combined = [];
+        remoteSigs.initials.concat(psi.initials || []).forEach(function(e) {
           var key = (e.name||'')+'|'+(e.breakType||'')+'|'+(e.date||'');
           if (!seen[key]) { seen[key] = true; combined.push(e); }
         });
         merged.initials = combined;
       }
     }
+
     buildPDF(merged, opts);
   });
 }
