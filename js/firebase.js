@@ -50,6 +50,22 @@ function firebaseWritePSI(record) {
   if (!db || !record || !record.id) return;
   try {
     var clean = JSON.parse(JSON.stringify(record));
+    // Strip all PNG data URLs before writing to Firestore.
+    // PNGs are 50-200 KB each (base64); with multiple signers the document
+    // easily exceeds Firestore's 1 MB limit and is silently rejected.
+    // Strokes (a few KB each) are enough to redraw signatures on any device.
+    if (clean.sigs && typeof clean.sigs === 'object') {
+      Object.keys(clean.sigs).forEach(function(k) {
+        if (clean.sigs[k] && clean.sigs[k].png) delete clean.sigs[k].png;
+      });
+    }
+    if (clean.supSigPng) delete clean.supSigPng;
+    // Also strip PNGs from break initials
+    if (Array.isArray(clean.initials)) {
+      clean.initials.forEach(function(entry) {
+        if (entry && entry.png) delete entry.png;
+      });
+    }
     db.collection('psis').doc(clean.id).set(clean).catch(function() {});
   } catch(e) {}
 }
@@ -120,10 +136,10 @@ function firebaseSaveSignature(name, strokes, png) {
   if (!db || !name) return;
   try {
     var docId = name.trim().toLowerCase().replace(/\s+/g, '_');
+    // Store strokes only — PNG is too large for Firestore and is regenerated locally
     db.collection('signatures').doc(docId).set({
       name: name.trim(),
       strokes: JSON.stringify(strokes || []),
-      png: png || '',
       updatedAt: Date.now()
     }).catch(function() {});
   } catch(e) {}
