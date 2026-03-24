@@ -187,11 +187,15 @@ async function buildPDF(psi, opts) {
     const blob     = new Blob([outBytes], { type: 'application/pdf' });
     const url      = URL.createObjectURL(blob);
 
-    const jobCode = psi.jobCode || 'PSI';
-    const dateStr = fmtDateWords(psi.jobDate);
-    const desc    = (psi.taskDesc || 'PSI').replace(/\s+/g, '-');
-    const shortId = (psi.id || '').slice(0, 5);
-    const fname   = dateStr + ' - PSI ' + jobCode + ' ' + desc + (shortId ? ' ' + shortId : '') + '.pdf';
+    const jobCode  = psi.jobCode || '';
+    const dateStr  = fmtDateWords(psi.jobDate);
+    const tmpl     = (typeof BUILTIN_TEMPLATES !== 'undefined' && BUILTIN_TEMPLATES[jobCode])
+                     || (typeof loadLearned === 'function' && loadLearned()[jobCode])
+                     || null;
+    const tmplName = (tmpl && tmpl.name) ? tmpl.name : (psi.taskDesc || jobCode || 'PSI');
+    const nameSlug = tmplName.replace(/\s+/g, '-');
+    const shortId  = (psi.id || '').slice(0, 5);
+    const fname    = dateStr + ' - PSI ' + nameSlug + (shortId ? ' ' + shortId : '') + '.pdf';
 
     const a = document.createElement('a');
     a.href     = url;
