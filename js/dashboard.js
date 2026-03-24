@@ -278,8 +278,8 @@ function renderPSICard(psi, isHist) {
       right.appendChild(dup);
     }
 
-    // Delete — supervisor only
-    if (isSup) {
+    // Delete — available to all
+    if (isSup || isOwner || true) {
       const del = document.createElement('button');
       del.className   = 'psi-del';
       del.textContent = 'Delete';
@@ -527,11 +527,7 @@ function deletePSIConfirm(id, desc) {
   const psi   = loadPSI(id);
   if (!psi) return;
 
-  // Only supervisors can delete PSIs
-  if (me.role !== 'supervisor') {
-    toast('Only the supervisor can delete PSIs');
-    return;
-  }
+  // All users can delete PSIs
 
   if (!confirm('Delete "' + label + '"? This cannot be undone.')) return;
 
