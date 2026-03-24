@@ -181,9 +181,9 @@ async function buildPDF(psi, opts) {
 
     const jobCode = psi.jobCode || 'PSI';
     const dateStr = fmtDateWords(psi.jobDate);
-    const name    = (psi.createdBy || 'crew').replace(/\s+/g, '-');
+    const desc    = (psi.taskDesc || 'PSI').replace(/\s+/g, '-');
     const shortId = (psi.id || '').slice(0, 5);
-    const fname   = dateStr + ' - PSI ' + jobCode + ' ' + name + (shortId ? ' ' + shortId : '') + '.pdf';
+    const fname   = dateStr + ' - PSI ' + jobCode + ' ' + desc + (shortId ? ' ' + shortId : '') + '.pdf';
 
     const a = document.createElement('a');
     a.href     = url;
