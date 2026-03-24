@@ -8,12 +8,13 @@
 // SETUP: console.firebase.google.com → Project Settings → Your apps → </> Web
 // Paste your firebaseConfig object here:
 const firebaseConfig = {
-  // apiKey: "paste-your-key-here",
-  // authDomain: "your-project.firebaseapp.com",
-  // projectId: "your-project-id",
-  // storageBucket: "your-project.appspot.com",
-  // messagingSenderId: "000000000000",
-  // appId: "1:000000000000:web:abc123"
+  apiKey:            "AIzaSyAvbZEIWWnjuG8sl5Lt6SB4vpohCFXJUEQ",
+  authDomain:        "concorde-psi-490ed.firebaseapp.com",
+  databaseURL:       "https://concorde-psi-490ed-default-rtdb.firebaseio.com",
+  projectId:         "concorde-psi-490ed",
+  storageBucket:     "concorde-psi-490ed.firebasestorage.app",
+  messagingSenderId: "847750079349",
+  appId:             "1:847750079349:web:073cfff3863b6ed18ee93c"
 };
 
 var db = null;
