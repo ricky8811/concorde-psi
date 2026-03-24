@@ -218,12 +218,12 @@ function renderPSICard(psi, isHist) {
     dl.onclick     = function(e) { e.stopPropagation(); redownload(psi.id); };
     right.appendChild(dl);
 
-    // Workers: "✍ Sign" if worker fields still open
+    // Workers: quick "✍ Sign" on approved cards
     if (!isSup && workerFieldsOpen) {
       const signBtn = document.createElement('button');
       signBtn.className   = 'psi-initial-btn';
       signBtn.textContent = '✍ Sign';
-      signBtn.onclick     = function(e) { e.stopPropagation(); openPSI(psi.id); };
+      signBtn.onclick     = function(e) { e.stopPropagation(); openQuickWorkerSign(psi.id); };
       right.appendChild(signBtn);
     }
 
@@ -252,6 +252,13 @@ function renderPSICard(psi, isHist) {
       apBtn.onclick     = function(e) { e.stopPropagation(); openApproveModal(psi.id); };
       right.appendChild(apBtn);
     }
+
+    // Quick sign — available to all on active PSIs
+    const signBtn2 = document.createElement('button');
+    signBtn2.className   = 'psi-initial-btn';
+    signBtn2.textContent = '✍ Sign';
+    signBtn2.onclick     = function(e) { e.stopPropagation(); openQuickWorkerSign(psi.id); };
+    right.appendChild(signBtn2);
 
     // Quick initial — available to all on active PSIs
     const initBtn = document.createElement('button');

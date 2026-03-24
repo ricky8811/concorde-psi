@@ -265,11 +265,11 @@ function buildPDFWithSigs(psi, opts) {
           merged.supSigStrokes = remote.supervisor.strokes;
         }
       }
-      // Break initials — combine, dedup by name+breakType+date
+      // Break initials — remote first so stroke-bearing entries win
       if (remote.initials && remote.initials.length) {
         var seen = {};
         var combined = [];
-        ((psi.initials || []).concat(remote.initials)).forEach(function(e) {
+        (remote.initials.concat(psi.initials || [])).forEach(function(e) {
           var key = (e.name||'')+'|'+(e.breakType||'')+'|'+(e.date||'');
           if (!seen[key]) { seen[key] = true; combined.push(e); }
         });

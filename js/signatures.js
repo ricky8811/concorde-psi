@@ -576,3 +576,110 @@ function cancelQuickSign() {
   if (modal) modal.style.display = 'none';
   clearSig('quickSignCanvas');
 }
+
+
+// ── QUICK WORKER SIGN ─────────────────────────────────────────
+// Fast "✍ Sign" button on dashboard cards — same idea as Quick Initial
+// but saves a full worker signature to the PSI sigs collection.
+
+let _quickWorkerSignPSIId = null;
+
+function openQuickWorkerSign(psiId) {
+  _quickWorkerSignPSIId = psiId;
+  const psi    = loadPSI(psiId);
+  const modal  = document.getElementById('quickWorkerSignModal');
+  const nameEl = document.getElementById('quickWorkerSignName');
+  if (!modal || !psi) return;
+
+  // Show PSI worker name chips for fast selection
+  const chipsEl = document.getElementById('quickWorkerChips');
+  if (chipsEl) {
+    chipsEl.innerHTML = '';
+    const workers = (psi.workers || []).filter(function(w) { return w.name && w.name.trim(); });
+    workers.forEach(function(w) {
+      const chip = document.createElement('button');
+      chip.className   = 'psi-worker-chip';
+      chip.textContent = w.name;
+      chip.onclick     = function() {
+        chipsEl.querySelectorAll('.psi-worker-chip').forEach(function(c) { c.classList.remove('active'); });
+        chip.classList.add('active');
+        if (nameEl) nameEl.value = w.name;
+        // Pre-load saved signature for this person
+        const saved = loadSignatureFromMem(w.name);
+        if (saved && saved.strokes && saved.strokes.length) {
+          clearSig('quickWorkerSignCanvas');
+          setTimeout(function() {
+            initSigPad('quickWorkerSignCanvas');
+            redrawStrokes('quickWorkerSignCanvas', saved.strokes);
+          }, 50);
+        }
+      };
+      chipsEl.appendChild(chip);
+    });
+  }
+
+  // Pre-fill with logged-in user's name
+  if (nameEl) nameEl.value = me.name || '';
+
+  modal.style.display = 'flex';
+  setTimeout(function() {
+    initSigPad('quickWorkerSignCanvas');
+    _sigStrokes['quickWorkerSignCanvas'] = [];
+    // Pre-load saved signature for current user
+    const saved = loadSignatureFromMem(me.name);
+    if (saved && saved.strokes && saved.strokes.length) {
+      redrawStrokes('quickWorkerSignCanvas', saved.strokes);
+    }
+  }, 50);
+}
+
+function confirmQuickWorkerSign() {
+  if (!_quickWorkerSignPSIId) return;
+
+  const nameEl = document.getElementById('quickWorkerSignName');
+  const name   = nameEl ? nameEl.value.trim() : (me.name || '');
+  if (!name) { toast('Enter your name first'); return; }
+
+  const canvas = document.getElementById('quickWorkerSignCanvas');
+  if (!canvas || !canvas.classList.contains('signed')) {
+    toast('Please draw your signature first');
+    return;
+  }
+
+  const strokes = (_sigStrokes['quickWorkerSignCanvas'] || []).slice();
+  const png     = canvasToPNG('quickWorkerSignCanvas');
+
+  const psi = loadPSI(_quickWorkerSignPSIId);
+  if (!psi) return;
+
+  // Find this person's index in the worker list, or use next available slot
+  const workers = (psi.workers || []).filter(function(w) { return w.name && w.name.trim(); });
+  var idx = workers.findIndex(function(w) {
+    return w.name.trim().toLowerCase() === name.toLowerCase();
+  });
+  if (idx < 0) idx = Object.keys(psi.sigs || {}).length;
+
+  if (!psi.sigs) psi.sigs = {};
+  psi.sigs[idx] = { strokes: strokes, png: png };
+
+  saveSignatureToMem(name, strokes, png);
+  writePSI(psi);
+
+  // Push to sigs/{psiId} so all devices get it
+  if (typeof firebaseSavePSISigs === 'function') {
+    var entry = {};
+    entry[String(idx)] = { name: name, strokes: strokes };
+    firebaseSavePSISigs(psi.id, { workers: entry });
+  }
+
+  cancelQuickWorkerSign();
+  if (typeof refreshDash === 'function') refreshDash();
+  toast('✓ Signed — ' + name);
+}
+
+function cancelQuickWorkerSign() {
+  _quickWorkerSignPSIId = null;
+  const modal = document.getElementById('quickWorkerSignModal');
+  if (modal) modal.style.display = 'none';
+  clearSig('quickWorkerSignCanvas');
+}

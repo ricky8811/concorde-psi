@@ -676,6 +676,33 @@
 </div>
 
 <!-- ═══════════════════════════════════════════════════
+     QUICK WORKER SIGN MODAL
+═══════════════════════════════════════════════════ -->
+<div id="quickWorkerSignModal" class="modal-overlay" style="display:none">
+  <div class="modal-box">
+    <div class="modal-title">Sign PSI</div>
+
+    <div id="quickWorkerChips" class="psi-worker-chips"></div>
+
+    <div class="form-group">
+      <label>Your Name</label>
+      <input id="quickWorkerSignName" type="text" placeholder="Full name">
+    </div>
+    <div class="form-group">
+      <label>Signature</label>
+      <canvas id="quickWorkerSignCanvas" class="sig-canvas" touch-action="none"></canvas>
+      <div class="sig-actions">
+        <button class="btn btn-secondary btn-sm" onclick="clearSig('quickWorkerSignCanvas')">Clear</button>
+      </div>
+    </div>
+    <div class="step-actions">
+      <button class="btn btn-secondary btn-full" onclick="cancelQuickWorkerSign()">Cancel</button>
+      <button class="btn btn-accent btn-full"    onclick="confirmQuickWorkerSign()">✓ Sign</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════
      APPROVE MODAL
 ═══════════════════════════════════════════════════ -->
 <div id="approveModal" class="modal-overlay" style="display:none">
