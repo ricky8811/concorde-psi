@@ -199,11 +199,11 @@ function confirmSig() {
 
   const strokes = (_sigStrokes['sigCanvas'] || []).slice();
   const png     = canvasToPNG('sigCanvas');
+  const workers = st.workers.filter(function(w) { return w.name && w.name.trim(); });
+  const worker  = workers[_activeSigIdx];
 
   st.sigs[_activeSigIdx] = { name: worker ? worker.name : '', strokes: strokes, png: png };
 
-  const workers = st.workers.filter(function(w) { return w.name && w.name.trim(); });
-  const worker  = workers[_activeSigIdx];
   if (worker) {
     saveSignatureToMem(worker.name, strokes, png);
     sheetsSaveWorker(worker.name, worker.role);
@@ -549,6 +549,15 @@ function confirmQuickSign() {
     });
     writePSI(psi);
 
+    if (typeof maybeAutoSendPSIForReview === 'function' && maybeAutoSendPSIForReview(psi)) {
+      cancelQuickSign();
+      refreshDash();
+      toast(userRequiresSupervisorReview()
+        ? 'All workers initialed - sent for supervisor review'
+        : 'All workers initialed - PSI completed');
+      return;
+    }
+
     // Push only the newly added initials to sigs/{psiId}
     // (arrayUnion in firebaseSavePSISigs accumulates entries from all devices)
     if (typeof firebaseSavePSISigs === 'function') {
@@ -652,12 +661,16 @@ function confirmQuickWorkerSign() {
   const psi = loadPSI(_quickWorkerSignPSIId);
   if (!psi) return;
 
-  // Find this person's index in the worker list, or use next available slot
-  const workers = (psi.workers || []).filter(function(w) { return w.name && w.name.trim(); });
-  var idx = workers.findIndex(function(w) {
-    return w.name.trim().toLowerCase() === name.toLowerCase();
+  if (!Array.isArray(psi.workers)) psi.workers = [];
+
+  // Keep signature indices aligned to the actual PSI worker row.
+  var idx = psi.workers.findIndex(function(w) {
+    return w && w.name && w.name.trim().toLowerCase() === name.toLowerCase();
   });
-  if (idx < 0) idx = Object.keys(psi.sigs || {}).length;
+  if (idx < 0) {
+    psi.workers.push({ name: name, role: 'Worker' });
+    idx = psi.workers.length - 1;
+  }
 
   if (!psi.sigs) psi.sigs = {};
   psi.sigs[idx] = { name: name, strokes: strokes, png: png };

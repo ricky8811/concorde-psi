@@ -18,6 +18,11 @@ const LIFT_FLEET_KEY = 'concorde_lift_fleet';
 const LEARN_KEY     = 'concorde_learned';
 const PERSONNEL_KEY      = 'concorde_personnel';
 const SUPERVISOR_CFG_KEY = 'concorde_supervisor_cfg';
+const AI_CFG_KEY         = 'concorde_ai_cfg';
+
+// Optional remote AI endpoint.
+// Leave blank to keep using the built-in local wording engine only.
+const AI_ENDPOINT_URL = 'https://generatepsitext-k7ggv2uz5a-uc.a.run.app';
 
 // ── DEFAULT SUPERVISOR ─────────────────────────────────────────
 const DEFAULT_SUPERVISOR_NAME = 'Richard Hendrickson';
@@ -260,7 +265,7 @@ const BUILTIN_TEMPLATES = {
   'BRG-DAILY': {
     code: 'BRG-DAILY', name: 'Daily Bridge Inspection',
     desc: 'Daily operational check of all airport bridges',
-    taskDesc: 'Daily bridge inspection and operational check',
+    taskDesc: 'Daily bridge inspection',
     taskLoc: 'Airport Bridges', jobNumber: '', musterPoint: 'High Gate',
     triggerWords: ['bridge', 'pbb', 'bridge daily', 'daily bridge', 'bridge check', 'pbb check', 'walk bridge', 'bridge walk'],
     selectedHazards: ['env_weather_conditions', 'act_mobile_equipment_vehicle', 'acc_slip_trip_potential_identified'],
@@ -273,7 +278,7 @@ const BUILTIN_TEMPLATES = {
   'BRG-CALL': {
     code: 'BRG-CALL', name: 'Bridge Call-Out',
     desc: 'Emergency response to bridge fault or failure',
-    taskDesc: 'Emergency bridge call-out and repair',
+    taskDesc: 'Bridge call-out',
     taskLoc: 'Airport Bridges', jobNumber: '', musterPoint: 'High Gate',
     triggerWords: ['bridge', 'pbb', 'bridge call', 'bridge fault', 'bridge callout', 'bridge emergency', 'pbb fault', 'pbb call'],
     selectedHazards: ['env_weather_conditions', 'act_working_on_near_energized_equipment', 'act_energy_Isolation'],
@@ -286,7 +291,7 @@ const BUILTIN_TEMPLATES = {
   'BRG-WKLY': {
     code: 'BRG-WKLY', name: 'Weekly Bridge Inspection',
     desc: 'Comprehensive weekly structural and mechanical inspection',
-    taskDesc: 'Weekly comprehensive bridge inspection',
+    taskDesc: 'Weekly bridge inspection',
     taskLoc: 'Airport Bridges', jobNumber: '', musterPoint: 'High Gate',
     triggerWords: ['bridge', 'pbb', 'weekly bridge', 'bridge weekly', 'bridge inspection', 'pbb inspection', 'bridge insp'],
     selectedHazards: ['env_weather_conditions', 'act_mobile_equipment_vehicle', 'eng_repetitive_motion', 'acc_slip_trip_potential_identified'],
@@ -328,7 +333,7 @@ const BUILTIN_TEMPLATES = {
   'BRG-HYD': {
     code: 'BRG-HYD', name: 'Bridge Hydraulics',
     desc: 'Bridge hydraulic system service and repair',
-    taskDesc: 'Bridge hydraulic system service and repair',
+    taskDesc: 'Bridge hydraulics',
     taskLoc: 'Airport Bridges', jobNumber: '', musterPoint: 'High Gate',
     triggerWords: ['bridge', 'pbb', 'bridge hydraulic', 'hydraulic bridge', 'pbb hydraulic', 'bridge hydro', 'bridge hyd', 'hydraulic system bridge'],
     selectedHazards: ['act_working_on_near_energized_equipment', 'act_energy_Isolation', 'eng_pinch_points_identified', 'env_spill_potential_containment'],
@@ -342,7 +347,7 @@ const BUILTIN_TEMPLATES = {
   'GPU-REPAIR': {
     code: 'GPU-REPAIR', name: 'GPU / Ground Power Repair',
     desc: 'Ground power unit repair or cable and plug replacement',
-    taskDesc: 'GPU repair or cable/plug replacement',
+    taskDesc: 'GPU repair',
     taskLoc: 'Apron / Gate', jobNumber: '', musterPoint: 'High Gate',
     triggerWords: ['gpu', '28v', 'ground power', 'gpu repair', 'gpu cable', 'power cable', 'gpu plug', 'ground power unit'],
     selectedHazards: ['act_working_on_near_energized_equipment', 'act_mobile_equipment_vehicle', 'per_lift_too_heavy_awkward_position'],
@@ -356,7 +361,7 @@ const BUILTIN_TEMPLATES = {
   'LGT-IN-MIX': {
     code: 'LGT-IN-MIX', name: 'Interior Lighting - Mixed',
     desc: 'Interior fixture replacement using mixed methods',
-    taskDesc: 'Interior lighting replacement and maintenance',
+    taskDesc: 'Interior lighting',
     taskLoc: 'Terminal / ITB', jobNumber: '', musterPoint: 'Electrical Room',
     triggerWords: ['light', 'lighting', 'lamp', 'interior light', 'interior lighting', 'relamp', 'lamp replacement', 'fixture replacement', 'light fixture', 'interior fixture', 'inside light'],
     selectedHazards: ['act_working_on_near_energized_equipment', 'act_energy_Isolation', 'eng_working_above_your_head'],
@@ -369,7 +374,7 @@ const BUILTIN_TEMPLATES = {
   'LGT-IN-LAD': {
     code: 'LGT-IN-LAD', name: 'Interior Lighting - Ladder',
     desc: 'Interior lighting work from a ladder',
-    taskDesc: 'Interior lighting work using ladder',
+    taskDesc: 'Interior lighting ladder',
     taskLoc: 'Terminal / ITB', jobNumber: '', musterPoint: 'Electrical Room',
     triggerWords: ['light', 'lighting', 'lamp', 'interior light ladder', 'light ladder', 'lamp ladder', 'relamp ladder', 'fixture ladder', 'ladder light'],
     selectedHazards: ['act_working_on_near_energized_equipment', 'wah_ladders', 'eng_working_above_your_head'],
@@ -382,7 +387,7 @@ const BUILTIN_TEMPLATES = {
   'LGT-EX-LFT': {
     code: 'LGT-EX-LFT', name: 'Exterior Lighting - Lift',
     desc: 'Exterior lighting maintenance using MEWP',
-    taskDesc: 'Exterior lighting maintenance using MEWP',
+    taskDesc: 'Exterior lighting MEWP',
     taskLoc: 'Apron / Exterior', jobNumber: '', musterPoint: 'High Gate',
     triggerWords: ['light', 'lighting', 'lamp', 'exterior light lift', 'outside light lift', 'exterior lighting mewp', 'apron light', 'roadway light lift', 'pole light lift', 'parking lot light'],
     selectedHazards: ['env_weather_conditions', 'wah_powered_platforms', 'wah_fall arrest systems', 'act_mobile_equipment_vehicle'],
@@ -396,7 +401,7 @@ const BUILTIN_TEMPLATES = {
   'LGT-EX-LAD': {
     code: 'LGT-EX-LAD', name: 'Exterior Lighting - Ladder',
     desc: 'Exterior lighting maintenance from a ladder',
-    taskDesc: 'Exterior lighting maintenance using ladder',
+    taskDesc: 'Exterior lighting ladder',
     taskLoc: 'Apron / Exterior', jobNumber: '', musterPoint: 'High Gate',
     triggerWords: ['light', 'lighting', 'lamp', 'exterior light ladder', 'outside light ladder', 'roadway light ladder', 'pole light ladder'],
     selectedHazards: ['env_weather_conditions', 'wah_ladders', 'act_working_on_near_energized_equipment'],
@@ -409,7 +414,7 @@ const BUILTIN_TEMPLATES = {
   'LGT-STA-LFT': {
     code: 'LGT-STA-LFT', name: 'Static Lighting - Lift',
     desc: 'Static lighting replacement using a lift platform',
-    taskDesc: 'Static lighting replacement using lift',
+    taskDesc: 'Static lighting lift',
     taskLoc: 'Terminal / DTB', jobNumber: '', musterPoint: 'Electrical Room',
     triggerWords: ['light', 'lighting', 'lamp', 'static light', 'static lighting', 'static fixture', 'static lamp'],
     selectedHazards: ['wah_powered_platforms', 'act_working_on_near_energized_equipment', 'act_energy_Isolation'],
@@ -423,7 +428,7 @@ const BUILTIN_TEMPLATES = {
   'LGT-HM': {
     code: 'LGT-HM', name: 'High Mast Lighting',
     desc: 'High mast light head maintenance, lamp replacement, or repair',
-    taskDesc: 'High mast lighting maintenance and lamp replacement',
+    taskDesc: 'High mast lighting',
     taskLoc: 'Apron / Roadway', jobNumber: '', musterPoint: 'High Gate',
     triggerWords: ['high mast', 'mast light', 'mast lamp', 'apron light', 'high mast lighting', 'tall pole light', 'mast lighting'],
     selectedHazards: ['eng_working_above_your_head', 'wah_powered_platforms', 'wah_fall arrest systems', 'act_mobile_equipment_vehicle', 'env_weather_conditions'],
@@ -437,7 +442,7 @@ const BUILTIN_TEMPLATES = {
   'GEN-RUN': {
     code: 'GEN-RUN', name: 'Generator Run / Test',
     desc: 'Scheduled generator operational run and test',
-    taskDesc: 'Generator operational run and functional test',
+    taskDesc: 'Generator run test',
     taskLoc: 'Generator Room', jobNumber: '', musterPoint: 'Generator Room Door',
     triggerWords: ['generator', 'gen run', 'generator run', 'load test', 'load bank', 'gen test', 'generator test', 'run up generator'],
     selectedHazards: ['act_working_on_near_energized_equipment', 'env_ventilation_required', 'act_burn_heat_sources', 'per_external_noise levels'],
@@ -451,7 +456,7 @@ const BUILTIN_TEMPLATES = {
   'FIR-ENBL': {
     code: 'FIR-ENBL', name: 'Fire Panel - Enable/Disable',
     desc: 'Fire alarm panel enable or disable for maintenance',
-    taskDesc: 'Fire alarm panel enable or disable for maintenance',
+    taskDesc: 'Fire panel maintenance',
     taskLoc: 'Fire Panel Room', jobNumber: '', musterPoint: 'Main Entrance',
     triggerWords: ['fire', 'fire alarm', 'fire alarm disable', 'fire alarm enable', 'disable fire', 'enable fire', 'fire panel disable', 'fire panel enable', 'disable alarm'],
     selectedHazards: ['act_working_on_near_energized_equipment', 'per_clear_instructions_provided', 'acc_required_permits_in_place'],
@@ -465,7 +470,7 @@ const BUILTIN_TEMPLATES = {
   'FIR-BYP': {
     code: 'FIR-BYP', name: 'Fire Alarm Bypass',
     desc: 'Fire alarm system zone bypass for maintenance work',
-    taskDesc: 'Fire alarm zone bypass for maintenance',
+    taskDesc: 'Fire zone bypass',
     taskLoc: 'Fire Panel Room', jobNumber: '', musterPoint: 'Main Entrance',
     triggerWords: ['fire', 'fire alarm', 'fire bypass', 'bypass fire', 'bypass alarm', 'fire alarm bypass', 'zone bypass', 'alarm bypass'],
     selectedHazards: ['per_clear_instructions_provided', 'acc_required_permits_in_place'],
@@ -479,7 +484,7 @@ const BUILTIN_TEMPLATES = {
   'FIR-PULL': {
     code: 'FIR-PULL', name: 'Reset Pull Station',
     desc: 'Fire alarm pull station reset after activation',
-    taskDesc: 'Fire alarm pull station reset following activation',
+    taskDesc: 'Pull station reset',
     taskLoc: 'Terminal', jobNumber: '', musterPoint: 'Main Entrance',
     triggerWords: ['fire', 'pull station', 'reset pull', 'pull station reset', 'reset station', 'fire pull', 'station reset'],
     selectedHazards: ['per_clear_instructions_provided', 'per_distractions_in_work_area'],
@@ -493,7 +498,7 @@ const BUILTIN_TEMPLATES = {
   'HAND-DRY': {
     code: 'HAND-DRY', name: 'Hand Dryer Repair',
     desc: 'Washroom hand dryer repair or unit replacement',
-    taskDesc: 'Hand dryer repair or replacement',
+    taskDesc: 'Hand dryer repair',
     taskLoc: 'Terminal Washroom', jobNumber: '', musterPoint: 'Electrical Room',
     triggerWords: ['hand dryer', 'hand drier', 'dryer repair', 'washroom dryer', 'bathroom dryer', 'hand dryer repair'],
     selectedHazards: ['act_working_on_near_energized_equipment', 'act_energy_Isolation', 'eng_working_in_a_tight_area'],
@@ -507,7 +512,7 @@ const BUILTIN_TEMPLATES = {
   'PLC-CTRL': {
     code: 'PLC-CTRL', name: 'PLC / Controls / VFD',
     desc: 'PLC, VFD, contactor, or control panel repair and configuration',
-    taskDesc: 'PLC, VFD, contactor, or control panel repair',
+    taskDesc: 'PLC panel repair',
     taskLoc: 'Electrical Room', jobNumber: '', musterPoint: 'Electrical Room Door',
     triggerWords: ['plc', 'vfd', 'contactor', 'controls repair', 'control panel', 'plc repair', 'vfd repair', 'contactor replace', 'power supply', 'drive repair'],
     selectedHazards: ['act_working_on_near_energized_equipment', 'act_energy_Isolation', 'act_electrica_cords_tools_condition', 'act_equipment_tools_inspected'],
@@ -521,7 +526,7 @@ const BUILTIN_TEMPLATES = {
   'SUMP-PIT': {
     code: 'SUMP-PIT', name: 'Pull Pit / Sump',
     desc: 'Sump pit or pull pit pump service and repair',
-    taskDesc: 'Sump or pull pit pump service',
+    taskDesc: 'Sump pump service',
     taskLoc: 'Mechanical Room / Pit', jobNumber: '', musterPoint: 'Nearest Exit',
     triggerWords: ['sump', 'pull pit', 'sump pit', 'pit pump', 'sump pump', 'pull pit pump', 'sump repair'],
     selectedHazards: ['acc_slip_trip_potential_identified', 'env_ventilation_required', 'act_confined_space'],
@@ -563,7 +568,7 @@ const BUILTIN_TEMPLATES = {
   'LIVE-ELEC': {
     code: 'LIVE-ELEC', name: 'Live Electrical Troubleshoot (<600V)',
     desc: 'Energized electrical troubleshooting below 600V',
-    taskDesc: 'Live electrical troubleshooting below 600V',
+    taskDesc: 'Live electrical troubleshooting',
     taskLoc: 'Electrical Room', jobNumber: '', musterPoint: 'Electrical Room Door',
     triggerWords: ['live electrical', 'energized troubleshoot', 'live troubleshoot', 'live wire', 'energized work', 'test live', 'hot work electrical', 'live fault'],
     selectedHazards: ['act_working_on_near_energized_equipment', 'act_electrica_cords_tools_condition', 'act_equipment_tools_inspected', 'eng_parts_of_body_in_line_of_fire', 'per_first_aid_requirements'],
@@ -577,7 +582,7 @@ const BUILTIN_TEMPLATES = {
   'JANIT-EQ': {
     code: 'JANIT-EQ', name: 'Janitorial Equipment Repair',
     desc: 'Janitorial or floor cleaning equipment repair',
-    taskDesc: 'Janitorial or floor cleaning equipment repair',
+    taskDesc: 'Janitorial equipment repair',
     taskLoc: 'Terminal', jobNumber: '', musterPoint: 'Electrical Room',
     triggerWords: ['janitorial', 'floor machine', 'cleaning equipment', 'floor scrubber', 'sweeper repair', 'floor cleaner', 'burnisher', 'carpet cleaner repair'],
     selectedHazards: ['act_working_on_near_energized_equipment', 'act_energy_Isolation', 'acc_slip_trip_potential_identified'],
@@ -591,7 +596,7 @@ const BUILTIN_TEMPLATES = {
   'LIFT-INSP': {
     code: 'LIFT-INSP', name: 'Lift / MEWP Inspection',
     desc: 'Pre-use inspection of lift or mobile elevated work platform',
-    taskDesc: 'Pre-use lift and MEWP inspection',
+    taskDesc: 'Lift inspection',
     taskLoc: 'Apron / Terminal', jobNumber: '', musterPoint: 'Equipment Staging',
     triggerWords: ['lift inspection', 'mewp inspection', 'lift inspect', 'mewp inspect', 'pre use inspection', 'pre-use lift', 'platform inspection', 'scissor lift inspection'],
     selectedHazards: ['wah_powered_platforms', 'wah_fall arrest systems', 'act_mobile_equipment_vehicle', 'env_weather_conditions'],
@@ -605,7 +610,7 @@ const BUILTIN_TEMPLATES = {
   'HI-DUST': {
     code: 'HI-DUST', name: 'High Dusting',
     desc: 'High dusting of structural surfaces, fixtures, and overhead equipment',
-    taskDesc: 'High dusting of overhead surfaces and fixtures',
+    taskDesc: 'High dusting',
     taskLoc: 'Terminal', jobNumber: '', musterPoint: 'Electrical Room',
     triggerWords: ['high dusting', 'dusting', 'overhead dusting', 'dust removal', 'high dust', 'structural dusting'],
     selectedHazards: ['eng_working_above_your_head', 'wah_protect_from_falling_items', 'act_airborne_particles'],
@@ -619,7 +624,7 @@ const BUILTIN_TEMPLATES = {
   'SAPH-SYS': {
     code: 'SAPH-SYS', name: 'Sapphire System Work',
     desc: 'Sapphire fire suppression system inspection or maintenance',
-    taskDesc: 'Sapphire fire suppression system maintenance',
+    taskDesc: 'Sapphire maintenance',
     taskLoc: 'Data / Server Room', jobNumber: '', musterPoint: 'Nearest Exit',
     triggerWords: ['sapphire', 'sapphire system', 'suppression system', 'fire suppression', 'sapphire maintenance'],
     selectedHazards: ['per_clear_instructions_provided', 'acc_required_permits_in_place'],
@@ -633,7 +638,7 @@ const BUILTIN_TEMPLATES = {
   'BWAY-WORK': {
     code: 'BWAY-WORK', name: 'Breezeway Work',
     desc: 'Maintenance work in airport breezeway area',
-    taskDesc: 'Maintenance work in breezeway area',
+    taskDesc: 'Breezeway maintenance',
     taskLoc: 'Breezeway', jobNumber: '', musterPoint: 'Nearest Exit',
     triggerWords: ['breezeway', 'breezeway work', 'breezeway maintenance', 'corridor work', 'open corridor'],
     selectedHazards: ['env_weather_conditions', 'env_heat_stress_cold_exposure', 'act_mobile_equipment_vehicle'],
@@ -661,7 +666,7 @@ const BUILTIN_TEMPLATES = {
   'ELC-RM': {
     code: 'ELC-RM', name: 'Electrical Room Work',
     desc: 'Electrical room maintenance, fault-finding and repair',
-    taskDesc: 'Electrical room maintenance and repair',
+    taskDesc: 'Electrical room repair',
     taskLoc: 'Electrical Room', jobNumber: '', musterPoint: 'Electrical Room Door',
     triggerWords: ['electrical room', 'elec room', 'panel work', 'breaker panel', 'switchgear', 'mcc', 'motor control', 'panel repair', 'electrical maintenance'],
     selectedHazards: ['act_working_on_near_energized_equipment', 'act_energy_Isolation', 'act_electrica_cords_tools_condition', 'per_trained_to_use_tool_and_perform_task'],

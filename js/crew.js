@@ -10,7 +10,7 @@ let _crewLoaded = false;
 // ── SHOW / HIDE PANE ──────────────────────────────────────────
 
 function showCrewPane() {
-  if (me.role !== 'supervisor') { toast('Supervisor access required'); return; }
+  if (!userHasFullAccess()) { toast('Admin or supervisor access required'); return; }
 
   hide('dashboard');
   hide('editor');
@@ -178,6 +178,7 @@ function showCrewTab(tab) {
 
   if (tab === 'history')   crewRenderHist();
   if (tab === 'personnel') {
+    if (typeof renderPendingAccountsList === 'function') renderPendingAccountsList();
     if (typeof renderPersonnelList      === 'function') renderPersonnelList();
     if (typeof renderSupervisorSettings === 'function') renderSupervisorSettings();
   }

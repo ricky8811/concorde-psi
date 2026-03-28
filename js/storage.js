@@ -27,6 +27,22 @@ function lsSetJSON(key, val) {
   lsSet(key, JSON.stringify(val));
 }
 
+function loadAICfg() {
+  return lsGetJSON(AI_CFG_KEY, {
+    endpointUrl: AI_ENDPOINT_URL || '',
+    enabled: !!AI_ENDPOINT_URL
+  });
+}
+
+function saveAICfg(cfg) {
+  cfg = cfg || {};
+  var endpointUrl = String(cfg.endpointUrl || AI_ENDPOINT_URL || '').trim();
+  lsSetJSON(AI_CFG_KEY, {
+    endpointUrl: endpointUrl,
+    enabled: cfg.enabled !== false && !!endpointUrl
+  });
+}
+
 // ── PSI KEY ───────────────────────────────────────────────────
 
 function psiKey(id) { return 'psi_' + id; }
@@ -127,10 +143,17 @@ function loadSignatureFromMem(name) {
 
 // ── SESSION ───────────────────────────────────────────────────
 
-function saveSession(name, role) {
+function saveSession(name, role, extra) {
+  extra = extra || {};
   lsSetJSON(SESS_KEY, {
-    name,
-    role,
+    name: name || '',
+    role: role || 'worker',
+    uid: extra.uid || '',
+    email: extra.email || '',
+    authType: extra.authType || 'legacy',
+    trade: extra.trade || '',
+    workflowType: extra.workflowType || '',
+    requiresSupervisorReview: !!extra.requiresSupervisorReview,
     exp: Date.now() + 12 * 3600 * 1000,
   });
   // Record shift start if not already set

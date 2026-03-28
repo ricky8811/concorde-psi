@@ -6,6 +6,99 @@
 
 // ── SUPERVISOR: RENDER LIST IN PANE ───────────────────────────
 
+function ensurePersonnelName(name) {
+  name = String(name || '').trim();
+  if (!name) return;
+  var people = loadPersonnel();
+  var exists = people.some(function(p) {
+    return String(p || '').trim().toLowerCase() === name.toLowerCase();
+  });
+  if (exists) return;
+  people.push(name);
+  people.sort();
+  savePersonnel(people);
+}
+
+function renderPendingAccountsList() {
+  var list = document.getElementById('pendingAccountsList');
+  if (!list) return;
+
+  if (typeof firebaseListPendingUsers !== 'function') {
+    list.innerHTML = '<div class="empty"><div class="empty-title">Account approval not available</div></div>';
+    return;
+  }
+
+  list.innerHTML = '<div class="empty"><div class="empty-sub">Loading pending accounts...</div></div>';
+
+  firebaseListPendingUsers().then(function(rows) {
+    list.innerHTML = '';
+
+    if (!rows.length) {
+      list.innerHTML =
+        '<div class="empty">' +
+          '<div class="empty-title">No pending accounts</div>' +
+          '<div class="empty-sub">New worker signups will appear here for approval.</div>' +
+        '</div>';
+      return;
+    }
+
+    rows.forEach(function(user) {
+      var row = document.createElement('div');
+      row.className = 'crew-worker';
+
+      var info = document.createElement('div');
+      info.className = 'crew-name';
+      info.innerHTML =
+        '<strong>' + (user.name || 'Unnamed worker') + '</strong><br>' +
+        '<span style="font-size:12px;color:var(--text2)">' +
+        (user.email || 'No email') + ' - ' + ((user.trade || 'worker').charAt(0).toUpperCase() + (user.trade || 'worker').slice(1)) +
+        '</span>';
+
+      var controls = document.createElement('div');
+      controls.style.display = 'flex';
+      controls.style.gap = '8px';
+      controls.style.alignItems = 'center';
+
+      var tradeSel = document.createElement('select');
+      ['electrician', 'millwright', 'plumber', 'carpenter'].forEach(function(trade) {
+        var opt = document.createElement('option');
+        opt.value = trade;
+        opt.textContent = trade.charAt(0).toUpperCase() + trade.slice(1);
+        if ((user.trade || '') === trade) opt.selected = true;
+        tradeSel.appendChild(opt);
+      });
+
+      var approveBtn = document.createElement('button');
+      approveBtn.className = 'btn btn-secondary btn-sm';
+      approveBtn.textContent = 'Approve';
+      approveBtn.onclick = function() {
+        if (typeof firebaseApproveUserAccount !== 'function') {
+          toast('Account approval is not available');
+          return;
+        }
+        approveBtn.disabled = true;
+        firebaseApproveUserAccount(user.uid, tradeSel.value).then(function() {
+          ensurePersonnelName(user.name || '');
+          renderPendingAccountsList();
+          renderPersonnelList();
+          toast((user.name || 'Account') + ' approved');
+        }).catch(function(err) {
+          approveBtn.disabled = false;
+          toast((err && err.message) || 'Could not approve account');
+        });
+      };
+
+      controls.appendChild(tradeSel);
+      controls.appendChild(approveBtn);
+      row.appendChild(info);
+      row.appendChild(controls);
+      list.appendChild(row);
+    });
+  }).catch(function() {
+    list.innerHTML = '<div class="empty"><div class="empty-title">Could not load pending accounts</div></div>';
+  });
+}
+
 function renderPersonnelList() {
   const list = document.getElementById('personnelList');
   if (!list) return;
@@ -170,6 +263,7 @@ function showSupervisorTab(tab) {
     if (tab1) tab1.classList.remove('active');
     if (tab2) tab2.classList.add('active');
     if (newBtn) newBtn.style.display = 'none';
+    renderPendingAccountsList();
     renderPersonnelList();
     renderSupervisorSettings();
   }

@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-  <title>Concorde PSI</title>
+  <title>Concorde PSI V2 Preview</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-  <link rel="stylesheet" href="css/app.css">
-  <link rel="stylesheet" href="v2/v2.css">
+  <link rel="stylesheet" href="../css/app.css">
+  <link rel="stylesheet" href="v2.css">
 </head>
 <body class="v2-preview">
 
@@ -162,8 +162,6 @@
       <div id="dashEyebrow" class="dash-eyebrow">Field Workflow</div>
       <div id="dashTitle" class="dash-title">Work Dashboard</div>
       <div id="dashSubtitle" class="dash-subtitle">Open work, review items, and returned paperwork in one place.</div>
-      <div id="dashIdentityLabel" class="dash-eyebrow" style="margin-top:12px">Technician</div>
-      <div id="dashWelcome" class="dash-subtitle" style="margin-top:4px;font-size:15px;color:var(--text1);font-weight:600"></div>
     </div>
     <div id="dashSummary" class="dash-summary"></div>
     <div class="dash-quick-actions">
@@ -558,11 +556,6 @@
   <!-- Personnel tab -->
   <div id="crewTabPersonnel" class="pane-content" style="display:none">
 
-    <div class="crew-section">
-      <div class="crew-section-head">Pending Account Requests</div>
-      <div id="pendingAccountsList"></div>
-    </div>
-
     <!-- Workers list -->
     <div class="crew-section">
       <div class="crew-section-head">Workers</div>
@@ -837,20 +830,20 @@
   <div class="modal-box pm-scrollbox">
     <div class="modal-title" id="presetModalTitle">Edit Template</div>
 
-      <div class="form-group" style="display:none">
-        <label>Template Name</label>
-        <input id="pmName" type="text" autocapitalize="words">
-      </div>
+    <div class="form-group">
+      <label>Template Name</label>
+      <input id="pmName" type="text" autocapitalize="words">
+    </div>
 
-      <div class="form-group" style="display:none">
-        <label>Description</label>
-        <input id="pmDesc" type="text">
-      </div>
+    <div class="form-group">
+      <label>Description</label>
+      <input id="pmDesc" type="text">
+    </div>
 
-      <div class="form-group">
-        <label>Task Description</label>
-        <input id="pmTaskDesc" type="text" placeholder="Daily bridge inspection">
-      </div>
+    <div class="form-group">
+      <label>Task Description</label>
+      <input id="pmTaskDesc" type="text" placeholder="Default task description...">
+    </div>
 
     <div class="form-row">
       <div class="form-group">
@@ -947,17 +940,12 @@
       Paste one work order per line. Example: <strong>WO12345 - Fix highbay light</strong>
     </div>
 
-      <div class="form-group">
-        <label>Work Details</label>
-        <textarea id="workOrderImportText" rows="8" placeholder="WO12345 - Fix highbay light&#10;WO12346 - Bridge not retracting&#10;WO12347 - Replace ballast" oninput="renderWorkOrderPreview()"></textarea>
-      </div>
+    <div class="form-group">
+      <label>Work Details</label>
+      <textarea id="workOrderImportText" rows="8" placeholder="WO12345 - Fix highbay light&#10;WO12346 - Bridge not retracting&#10;WO12347 - Replace ballast"></textarea>
+    </div>
 
-      <div class="form-group">
-        <label>PSI Preview</label>
-        <div id="workOrderPreview" class="work-import-preview"></div>
-      </div>
-
-     <div class="modal-actions wo-import-actions">
+    <div class="modal-actions wo-import-actions">
       <button class="btn btn-secondary" onclick="closeWorkOrderImportModal()">Cancel</button>
       <button class="btn btn-secondary" onclick="importWorkOrders('group')">Build One PSI</button>
       <button class="btn btn-accent" onclick="importWorkOrders('split')">Build Separate PSIs</button>
@@ -1033,37 +1021,6 @@
 </div>
 <div id="toast"></div>
 <div id="offlineBar" style="display:none">No connection - changes saved locally</div>
-<div id="accountSetupModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeAccountSetupModal()">
-  <div class="modal-box">
-    <div class="modal-title">Complete Your Account</div>
-    <div class="modal-info">Fill in your real name and trade. You can also set a new password now.</div>
-    <div class="form-group">
-      <label>Full Name</label>
-      <input id="accountSetupName" type="text" autocomplete="name" autocapitalize="words" placeholder="First and last name">
-    </div>
-    <div class="form-group">
-      <label>Trade</label>
-      <select id="accountSetupTrade">
-        <option value="electrician">Electrician</option>
-        <option value="millwright">Millwright</option>
-        <option value="plumber">Plumber</option>
-        <option value="carpenter">Carpenter</option>
-      </select>
-    </div>
-    <div class="form-group">
-      <label>New Password <span style="font-size:11px;color:var(--text3)">(optional)</span></label>
-      <input id="accountSetupPassword" type="password" autocomplete="new-password" placeholder="Leave blank to keep current password">
-    </div>
-    <div class="form-group">
-      <label>Confirm New Password</label>
-      <input id="accountSetupPassword2" type="password" autocomplete="new-password" placeholder="Repeat new password">
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-secondary" onclick="closeAccountSetupModal()">Later</button>
-      <button class="btn btn-accent" onclick="saveAccountSetup()">Save Account</button>
-    </div>
-  </div>
-</div>
 
 
 <!-- Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
@@ -1074,27 +1031,27 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 
-<script src="js/sheets.js"></script>
-<script src="js/config.js"></script>
-<script src="js/storage.js"></script>
-<script src="js/firebase.js"></script>
-<script src="js/auth.js"></script>
-<script src="js/weather.js"></script>
-<script src="js/signatures.js"></script>
-<script src="js/hazards.js"></script>
-<script src="js/rules.js"></script>
-<script src="js/wording.js"></script>
-<script src="js/ai.js"></script>
-<script src="js/dashboard.js"></script>
-<script src="js/editor.js"></script>
-<script src="js/presets.js"></script>
-<script src="js/pdf.js"></script>
-<script src="js/safety.js"></script>
-<script src="js/crew.js"></script>
-<script src="js/personnel.js"></script>
-<script src="js/lift.js"></script>
-<script src="js/shifts.js"></script>
-<script src="js/app.js"></script>
+<script src="../js/sheets.js"></script>
+<script src="../js/config.js"></script>
+<script src="../js/storage.js"></script>
+<script src="../js/firebase.js"></script>
+<script src="../js/auth.js"></script>
+<script src="../js/weather.js"></script>
+<script src="../js/signatures.js"></script>
+<script src="../js/hazards.js"></script>
+<script src="../js/rules.js"></script>
+<script src="../js/wording.js"></script>
+<script src="../js/ai.js"></script>
+<script src="../js/dashboard.js"></script>
+<script src="../js/editor.js"></script>
+<script src="../js/presets.js"></script>
+<script src="../js/pdf.js"></script>
+<script src="../js/safety.js"></script>
+<script src="../js/crew.js"></script>
+<script src="../js/personnel.js"></script>
+<script src="../js/lift.js"></script>
+<script src="../js/shifts.js"></script>
+<script src="../js/app.js"></script>
 
 </body>
 </html>

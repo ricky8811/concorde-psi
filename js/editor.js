@@ -1,8 +1,8 @@
-/* ═══════════════════════════════════════════════════════════════
-   js/editor.js — PSI editor, all 7 steps, state, autosave
-═══════════════════════════════════════════════════════════════ */
+﻿/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+   js/editor.js â€” PSI editor, all 7 steps, state, autosave
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
-// ── EDITOR STATE ──────────────────────────────────────────────
+// â”€â”€ EDITOR STATE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const st = {
   hazards:       new Set(),  // Set of PDF field name strings
   customHazards: new Set(),  // Set of custom hazard label strings
@@ -20,9 +20,73 @@ let _saveTimer      = null;   // debounce timer
 let _curStep        = 0;
 let _matchDebounce  = null;   // debounce for job matching
 let _psiLocked      = false;  // true when worker opens an approved PSI (safety content locked)
+let _liftPromptShownFor = null;
+let _jobCategoryOpen = {};
+
+function getAISourceLabel(pack) {
+  var source = String((pack && pack._aiSource) || '').toLowerCase();
+  return source === 'remote' ? 'Gemini' : 'Local fallback';
+}
+
+function toastAISource(pack, prefix) {
+  var label = getAISourceLabel(pack);
+  toast((prefix || 'Generated with') + ' ' + label);
+}
+
+function psiNeedsLift(psi) {
+  var source = psi || {};
+  var hazards = source.hazards || Array.from(st.hazards || []);
+  var conditions = source.conditions || st.conditions || {};
+  var code = source.jobCode || _selJob || '';
+  return !!(
+    conditions.lift ||
+    hazards.indexOf('wah_powered_platforms') !== -1 ||
+    hazards.indexOf('wah_fall arrest systems') !== -1 ||
+    /(?:^|[-])(LFT|LIFT|BUCK)(?:[-]|$)/i.test(code)
+  );
+}
+
+function updateLiftRequirementUI(psi) {
+  var box = document.getElementById('liftRequiredBox');
+  if (!box) return;
+  if (!psiNeedsLift(psi)) {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+
+  var linked = psi && psi.liftUnitKey;
+  var status = psi && psi.liftInspectionStatus;
+  box.style.display = 'flex';
+  box.innerHTML = '';
+
+  var label = document.createElement('span');
+  label.className = 'match-label';
+  label.textContent = linked
+    ? ('Lift: ' + linked + (status ? ' - ' + status : ''))
+    : 'Lift Required';
+  box.appendChild(label);
+
+  var btn = document.createElement('button');
+  btn.className = 'match-chip';
+  btn.textContent = linked ? 'Open Lift Inspection' : 'Select Lift Unit';
+  btn.onclick = function() {
+    if (typeof openLiftLinkModal === 'function') openLiftLinkModal();
+  };
+  box.appendChild(btn);
+}
+
+function maybePromptLiftLink(psi) {
+  if (!psi || !psi.id) return;
+  if (!psiNeedsLift(psi)) return;
+  if (psi.liftUnitKey) return;
+  if (_liftPromptShownFor === psi.id) return;
+  _liftPromptShownFor = psi.id;
+  if (typeof openLiftLinkModal === 'function') openLiftLinkModal();
+}
 
 
-// ── PERMISSION HELPERS ────────────────────────────────────────
+// â”€â”€ PERMISSION HELPERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Returns true if the current user can edit safety content on this PSI
 function canEditSafety(psi) {
@@ -41,10 +105,12 @@ function canEditWorkerFields(psi) {
 }
 
 
-// ── NEW PSI ───────────────────────────────────────────────────
+// â”€â”€ NEW PSI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function newPSI() {
   _psiLocked = false;   // new PSIs are never locked
+  _liftPromptShownFor = null;
+  _jobCategoryOpen = {};
 
   // Reset state
   st.hazards       = new Set();
@@ -76,6 +142,7 @@ function newPSI() {
   // Clear job library selection and conditions
   const jobSearch = document.getElementById('jobSearch');
   if (jobSearch) jobSearch.value = '';
+  setJobLibraryCollapsed(false, null);
   st.conditions = {};
   resetConditionPanel();
 
@@ -88,14 +155,270 @@ function newPSI() {
   showEditor(0);
 }
 
+function openWorkOrderImportModal() {
+  const modal = document.getElementById('workOrderImportModal');
+  const textEl = document.getElementById('workOrderImportText');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  modal.classList.add('open');
+  renderWorkOrderPreview();
+  setTimeout(function() {
+    if (textEl) textEl.focus();
+  }, 60);
+}
 
-// ── OPEN EXISTING PSI ────────────────────────────────────────
+function closeWorkOrderImportModal() {
+  const modal = document.getElementById('workOrderImportModal');
+  if (!modal) return;
+  modal.style.display = 'none';
+  modal.classList.remove('open');
+  renderWorkOrderPreview('');
+}
+
+function parseWorkOrderText(text) {
+  return (text || '')
+    .split(/\r?\n/)
+    .map(function(line) { return line.trim(); })
+    .filter(Boolean)
+    .map(function(line, idx) {
+      var match = line.match(/^\s*([A-Za-z]{0,4}\d[\w-]*)\s*[-:]\s*(.+)\s*$/);
+      if (match) {
+        return {
+          id: idx,
+          raw: line,
+          workOrder: match[1].trim(),
+          taskText: match[2].trim(),
+        };
+      }
+      return {
+        id: idx,
+        raw: line,
+        workOrder: '',
+        taskText: line,
+      };
+    });
+}
+
+function titleCaseWords(text) {
+  return (text || '').replace(/\w\S*/g, function(word) {
+    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+  });
+}
+
+function normalizeTaskText(text) {
+  var clean = (text || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return '';
+  clean = clean.replace(/\bwo[\s-]?\d+\b/ig, '').replace(/\s+/g, ' ').trim();
+  if (!clean) return '';
+  return titleCaseWords(clean);
+}
+
+function deriveShortJobTitle(taskText, tmpl) {
+  if (tmpl && tmpl.name) return tmpl.name;
+  var clean = normalizeTaskText(taskText);
+  if (!clean) return 'Imported Work Order';
+  return clean.split(/\s+/).slice(0, 6).join(' ');
+}
+
+function getImportPreviewTaskDesc(taskText, tmpl) {
+  var base = (tmpl && (tmpl.taskDesc || tmpl.name || tmpl.code)) || normalizeTaskText(taskText) || 'Custom work';
+  return String(base).replace(/\s+/g, ' ').trim();
+}
+
+function describeImportMatch(item) {
+  var sourceText = item.taskText || item.raw || '';
+  var tmpl = matchJobType(sourceText)[0] || null;
+  return {
+    item: item,
+    template: tmpl,
+    taskDesc: getImportPreviewTaskDesc(sourceText, tmpl),
+    title: tmpl ? (tmpl.code || tmpl.name || 'Matched template') : 'Custom PSI',
+    meta: item.workOrder ? ('WO ' + item.workOrder) : 'No work order detected',
+    note: tmpl ? ('Matched to ' + (tmpl.name || tmpl.code || 'template')) : 'No template match, AI will build from your wording',
+  };
+}
+
+function renderWorkOrderPreview(forcedText) {
+  var box = document.getElementById('workOrderPreview');
+  var textEl = document.getElementById('workOrderImportText');
+  if (!box) return;
+
+  var text = typeof forcedText === 'string' ? forcedText : (textEl ? textEl.value : '');
+  var items = parseWorkOrderText(text);
+  box.innerHTML = '';
+
+  if (!items.length) {
+    box.className = 'work-import-preview empty';
+    box.textContent = 'Paste jobs or work orders to preview the PSIs that will be created.';
+    return;
+  }
+
+  box.className = 'work-import-preview';
+
+  items.forEach(function(item) {
+    var info = describeImportMatch(item);
+
+    var row = document.createElement('div');
+    row.className = 'work-import-item';
+
+    var top = document.createElement('div');
+    top.className = 'work-import-title';
+
+    var title = document.createElement('span');
+    title.textContent = info.taskDesc;
+    top.appendChild(title);
+
+    var pill = document.createElement('span');
+    pill.className = 'work-import-pill';
+    pill.textContent = info.title;
+    top.appendChild(pill);
+
+    var meta = document.createElement('div');
+    meta.className = 'work-import-meta';
+    meta.textContent = info.meta + ' - ' + (normalizeTaskText(item.taskText || item.raw) || item.raw || '');
+
+    var note = document.createElement('div');
+    note.className = 'work-import-meta';
+    note.textContent = info.note;
+
+    row.appendChild(top);
+    row.appendChild(meta);
+    row.appendChild(note);
+    box.appendChild(row);
+  });
+}
+
+function buildImportedPSIRecord(item, tmpl, opts) {
+  opts = opts || {};
+  var hazards = new Set((tmpl && tmpl.selectedHazards) || []);
+  var ppe = new Set((tmpl && tmpl.ppeSelected) || []);
+  var aiPack = opts.aiPack || ((window.AIEngine && typeof AIEngine.generateTaskPack === 'function')
+    ? AIEngine.generateTaskPack(item.taskText, tmpl)
+    : null);
+  var taskStepsText = aiPack ? (aiPack.taskStepsText || '') : '';
+  var hazardText = aiPack ? (aiPack.hazardText || '') : '';
+  var controlText = aiPack ? (aiPack.controlText || '') : '';
+
+  return {
+    id: genId(),
+    createdBy: me.name,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    jobCode: tmpl ? tmpl.code : '',
+    jobTitle: opts.jobTitle || (aiPack && aiPack.shortTitle) || deriveShortJobTitle(item.taskText, tmpl),
+    jobDate: todayISO(),
+    jobTime: nowTime(),
+      taskDesc: (tmpl && (tmpl.taskDesc || tmpl.name)) || normalizeTaskText(item.taskText) || 'Imported work order',
+    taskLoc: (tmpl && tmpl.taskLoc) || '',
+    jobNumber: item.workOrder || '',
+    workOrders: opts.workOrders || [{
+      number: item.workOrder || '',
+      description: item.taskText || '',
+      raw: item.raw || '',
+    }],
+    musterPoint: (tmpl && tmpl.musterPoint) || '',
+    hazards: Array.from(hazards),
+    customHazards: [],
+    taskStepsText: taskStepsText,
+    hazardText: hazardText,
+    controlText: controlText,
+    ppe: Array.from(ppe),
+    conditions: {},
+    workers: [{ name: me.name, role: me.role === 'supervisor' ? 'Supervisor' : 'Worker' }],
+    sigs: {},
+    initials: [],
+    weather: window._wx || '',
+    weatherTemp: window._wxTemp != null ? window._wxTemp : undefined,
+    weatherCode: window._wxCode != null ? window._wxCode : undefined,
+    weatherAdvisory: (typeof getWeatherAdvisories === 'function')
+      ? getWeatherAdvisories().map(function(tip) { return tip.text; })
+      : [],
+    approved: false,
+    submittedForApproval: false,
+  };
+}
+
+function importWorkOrders(mode) {
+  var textEl = document.getElementById('workOrderImportText');
+  var items = parseWorkOrderText(textEl ? textEl.value : '');
+  if (!items.length) { toast('Paste at least one work order'); return; }
+
+  var created = [];
+  var aiSources = [];
+  toast('Building PSI drafts...');
+
+  function finishImport() {
+    if (textEl) textEl.value = '';
+    renderWorkOrderPreview('');
+    closeWorkOrderImportModal();
+    me.activePSI = null;
+    hide('editor');
+    show('dashboard');
+    refreshDash();
+    toast('Created ' + created.length + ' PSI draft' + (created.length !== 1 ? 's' : ''));
+    if (aiSources.length) {
+      var usedRemote = aiSources.indexOf('remote') !== -1;
+      var usedLocal = aiSources.indexOf('local') !== -1;
+      if (usedRemote && usedLocal) toast('AI source: Gemini with local fallback');
+      else toast('AI source: ' + (usedRemote ? 'Gemini' : 'Local fallback'));
+    }
+  }
+
+  if (mode === 'group') {
+    var joinedTask = items.map(function(item) {
+      return normalizeTaskText(item.taskText) || item.taskText || item.raw;
+    }).filter(Boolean).join(' | ');
+    var groupedItem = {
+      raw: items.map(function(item) { return item.raw; }).join('\n'),
+      workOrder: items.map(function(item) { return item.workOrder; }).filter(Boolean).join(', '),
+      taskText: joinedTask,
+    };
+    var groupedTemplate = matchJobType(joinedTask)[0] || null;
+    var groupedPromise = (window.AIEngine && typeof AIEngine.generateTaskPackAsync === 'function')
+      ? AIEngine.generateTaskPackAsync(joinedTask, groupedTemplate)
+      : Promise.resolve(null);
+    groupedPromise.then(function(aiPack) {
+      aiSources.push(String((aiPack && aiPack._aiSource) || 'local').toLowerCase());
+      var groupedRecord = buildImportedPSIRecord(groupedItem, groupedTemplate, {
+        aiPack: aiPack,
+        jobTitle: (aiPack && aiPack.shortTitle) || (groupedTemplate ? groupedTemplate.name : 'Grouped Work Orders'),
+        workOrders: items.map(function(item) {
+          return {
+            number: item.workOrder || '',
+            description: item.taskText || '',
+            raw: item.raw || '',
+          };
+        }),
+      });
+      writePSI(groupedRecord);
+      created.push(groupedRecord);
+      finishImport();
+    });
+    return;
+  }
+  Promise.all(items.map(function(item) {
+    var tmpl = matchJobType(item.taskText || item.raw)[0] || null;
+    var aiPromise = (window.AIEngine && typeof AIEngine.generateTaskPackAsync === 'function')
+      ? AIEngine.generateTaskPackAsync(item.taskText || item.raw, tmpl)
+      : Promise.resolve(null);
+    return aiPromise.then(function(aiPack) {
+      aiSources.push(String((aiPack && aiPack._aiSource) || 'local').toLowerCase());
+      var record = buildImportedPSIRecord(item, tmpl, { aiPack: aiPack });
+      writePSI(record);
+      created.push(record);
+    });
+  })).then(finishImport);
+}
+
+
+// â”€â”€ OPEN EXISTING PSI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function openPSI(id) {
   const psi = loadPSI(id);
   if (!psi) { toast('PSI not found'); return; }
 
   me.activePSI = id;
+  _liftPromptShownFor = psi.liftUnitKey ? psi.id : null;
 
   // Restore state
   st.hazards       = new Set(psi.hazards       || []);
@@ -139,6 +462,7 @@ function openPSI(id) {
   if (locEl)   locEl.value   = psi.taskLoc    || '';
   if (numEl)   numEl.value   = psi.jobNumber  || '';
   if (mustEl)  mustEl.value  = psi.musterPoint || '';
+  updateLiftRequirementUI(psi);
 
   // Determine lock state
   _psiLocked = !canEditSafety(psi);
@@ -152,7 +476,7 @@ function openPSI(id) {
 }
 
 
-// ── SHOW EDITOR ───────────────────────────────────────────────
+// â”€â”€ SHOW EDITOR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function showEditor(stepNum) {
   hide('dashboard');
@@ -163,16 +487,16 @@ function showEditor(stepNum) {
 }
 
 
-// ── GO TO STEP ────────────────────────────────────────────────
+// â”€â”€ GO TO STEP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function goStep(n) {
   // Locked PSI: workers can only access Step 5 (signatures)
   if (_psiLocked && n !== 5) {
-    toast('PSI is approved — you can only add your signature');
+    toast('PSI is approved - you can only add your signature');
     return;
   }
 
-  // Validate step 0 → 1
+  // Validate step 0 â†’ 1
   if (!_psiLocked && n > 0 && n > _curStep + 1 && _curStep === 0) {
     const desc = (document.getElementById('jobDesc') || {}).value || '';
     if (!_selJob && !desc.trim()) {
@@ -182,7 +506,7 @@ function goStep(n) {
   }
 
   // Step 6 is supervisor-only
-  if (n === 6 && me.role !== 'supervisor') {
+  if (n === 6 && !userHasFullAccess()) {
     toast('Supervisor access required');
     return;
   }
@@ -202,7 +526,7 @@ function goStep(n) {
     tab.classList.toggle('done',   i < n);
   });
 
-  // Update progress bar (7 steps, 0–6)
+  // Update progress bar (7 steps, 0â€“6)
   const pct = Math.round((n / 6) * 100);
   const bar = document.getElementById('stepBar');
   if (bar) bar.style.width = pct + '%';
@@ -229,7 +553,7 @@ function goStep(n) {
 }
 
 
-// ── PSI DATE CHANGE → update forecast advisory ────────────────
+// â”€â”€ PSI DATE CHANGE â†’ update forecast advisory â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function onPSIDateChange(dateStr) {
   if (typeof updateWeatherForPSIDate === 'function') {
@@ -244,10 +568,10 @@ function onPSIDateChange(dateStr) {
 }
 
 
-// ── BACK TO DASHBOARD ─────────────────────────────────────────
+// â”€â”€ BACK TO DASHBOARD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function edBack() {
-  onTaskTextInput();   // sync textarea → state before saving
+  onTaskTextInput();   // sync textarea â†’ state before saving
   savePSI({});         // save immediately, NOT debounced
   me.activePSI = null;
   _curStep = 0;
@@ -258,7 +582,7 @@ function edBack() {
 }
 
 
-// ── SAVE PSI ──────────────────────────────────────────────────
+// â”€â”€ SAVE PSI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function savePSI(extra) {
   if (!me.activePSI) return;
@@ -269,8 +593,8 @@ function savePSI(extra) {
   // Merge existing sigs with current state (don't overwrite saved sigs)
   const mergedSigs = Object.assign({}, existing.sigs || {}, st.sigs);
 
-  // Workers on approved PSIs can ONLY update worker/sig fields — never safety content
-  const lockSafety = existing.approved && me.role !== 'supervisor';
+  // Workers on approved PSIs can ONLY update worker/sig fields â€” never safety content
+  const lockSafety = existing.approved && !userHasFullAccess();
 
   const record = Object.assign({}, existing, {
     id:          me.activePSI,
@@ -280,11 +604,13 @@ function savePSI(extra) {
 
     // Safety fields: only update if user has permission
     jobCode:       lockSafety ? existing.jobCode      : (_selJob || existing.jobCode || ''),
+    jobTitle:      existing.jobTitle || '',
     jobDate:       lockSafety ? existing.jobDate      : ((document.getElementById('jobDate')   || {}).value || existing.jobDate   || todayISO()),
     jobTime:       lockSafety ? existing.jobTime      : ((document.getElementById('jobTime')   || {}).value || existing.jobTime   || nowTime()),
     taskDesc:      lockSafety ? existing.taskDesc     : ((document.getElementById('jobDesc')   || {}).value || existing.taskDesc   || ''),
     taskLoc:       lockSafety ? existing.taskLoc      : ((document.getElementById('jobLoc')    || {}).value || existing.taskLoc    || ''),
     jobNumber:     lockSafety ? existing.jobNumber    : ((document.getElementById('jobNumber') || {}).value || existing.jobNumber  || ''),
+    workOrders:    existing.workOrders || [],
     musterPoint:   lockSafety ? existing.musterPoint  : ((document.getElementById('jobMuster') || {}).value || existing.musterPoint || ''),
     hazards:       lockSafety ? existing.hazards      : Array.from(st.hazards),
     customHazards: lockSafety ? existing.customHazards: Array.from(st.customHazards),
@@ -309,11 +635,20 @@ function savePSI(extra) {
     ),
   }, extra);
 
+  if (!lockSafety) {
+    record.liftRequired = psiNeedsLift(record);
+  }
+
   writePSI(record);
+  if (!lockSafety && typeof refreshLiftLinkForPSI === 'function') {
+    refreshLiftLinkForPSI(record);
+  }
+  updateLiftRequirementUI(record);
+  return record;
 }
 
 
-// ── AUTOSAVE (debounced) ──────────────────────────────────────
+// â”€â”€ AUTOSAVE (debounced) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function schedSave() {
   clearTimeout(_saveTimer);
@@ -321,18 +656,21 @@ function schedSave() {
 }
 
 
-// ── CURRENT PSI DATA (for PDF) ────────────────────────────────
+// â”€â”€ CURRENT PSI DATA (for PDF) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function currentPSIData() {
   if (!me.activePSI) return null;
   savePSI({});
-  return loadPSI(me.activePSI);
+  var psi = loadPSI(me.activePSI);
+  return (window.AIEngine && typeof AIEngine.normalizePSIRecord === 'function')
+    ? AIEngine.normalizePSIRecord(psi)
+    : psi;
 }
 
 
-// ═══════════════════════════════════════════════════
-// STEP 0 — JOB LIBRARY
-// ═══════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// STEP 0 â€” JOB LIBRARY
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function renderJobLib(query) {
   const lib = document.getElementById('jobLibrary');
@@ -355,8 +693,15 @@ function renderJobLib(query) {
     return (usage[b.code] || 0) - (usage[a.code] || 0);
   });
 
+  var groupedBuiltins = {};
   builtins.forEach(function(t) {
-    lib.appendChild(makeJobCard(t, usage[t.code] || 0));
+    var cat = jobCategoryLabel(t);
+    if (!groupedBuiltins[cat]) groupedBuiltins[cat] = [];
+    groupedBuiltins[cat].push(t);
+  });
+
+  Object.keys(groupedBuiltins).sort().forEach(function(cat) {
+    appendJobCategory(lib, cat, groupedBuiltins[cat], usage, false);
   });
 
   // Learned / custom templates
@@ -367,20 +712,13 @@ function renderJobLib(query) {
   });
 
   if (learnedList.length > 0) {
-    const divider = document.createElement('div');
-    divider.className   = 'jc-divider';
-    divider.textContent = 'My Custom Templates';
-    lib.appendChild(divider);
-
-    learnedList.forEach(function(t) {
-      lib.appendChild(makeJobCard(t, usage[t.code] || 0, true));
-    });
+    appendJobCategory(lib, 'My Custom Templates', learnedList, usage, true);
   }
 
-  // "＋ New template" button at bottom of list
+  // "New template" button at bottom of list
   const newBtn = document.createElement('button');
   newBtn.className   = 'jc-new-btn';
-  newBtn.textContent = '＋ New Job Template';
+  newBtn.textContent = '+ New Job Template';
   newBtn.onclick     = function() {
     if (typeof openNewTemplateModal === 'function') openNewTemplateModal(true);
   };
@@ -393,6 +731,112 @@ function renderJobLib(query) {
     empty.textContent   = 'No templates match "' + query + '"';
     lib.insertBefore(empty, newBtn);
   }
+}
+
+function jobCategoryLabel(t) {
+  var text = ((t && (t.name + ' ' + t.code + ' ' + (t.desc || ''))) || '').toLowerCase();
+  if (/light|lamp|ballast|fixture|highbay|flood/.test(text)) return 'Lighting';
+  if (/bridge|pbb|gate|retract/.test(text)) return 'Bridges';
+  if (/lift|mewp|bucket|platform|scissor|boom/.test(text)) return 'Lift Access';
+  if (/inspect|inspection|check|audit/.test(text)) return 'Inspection';
+  if (/elect|power|breaker|panel|troubleshoot|conduit|wire/.test(text)) return 'Electrical';
+  if (/belt|bearing|motor|gear|pump|millwright|mechanic/.test(text)) return 'Mechanical';
+  if (/door|gate|baggage|conveyor/.test(text)) return 'Systems';
+  return 'General';
+}
+
+function appendJobCategory(lib, title, items, usage, isLearned) {
+  if (!items || !items.length) return;
+
+  const group = document.createElement('div');
+  group.className = 'job-category-block';
+  const isOpen = shouldOpenJobCategory(title);
+  group.dataset.category = title;
+  group.classList.toggle('open', isOpen);
+
+  const head = document.createElement('div');
+  head.className = 'job-category-head';
+  head.innerHTML =
+    '<div class="job-category-title">' + title + '</div>' +
+    '<div class="job-category-meta">' +
+      '<div class="job-category-count">' + items.length + '</div>' +
+      '<div class="job-category-chevron">' + (isOpen ? 'v' : '>') + '</div>' +
+    '</div>';
+  head.onclick = function() {
+    toggleJobCategory(title, group);
+  };
+  group.appendChild(head);
+
+  const body = document.createElement('div');
+  body.className = 'job-category-body';
+
+  items.forEach(function(t) {
+    body.appendChild(makeJobCard(t, usage[t.code] || 0, isLearned));
+  });
+  group.appendChild(body);
+
+  lib.appendChild(group);
+}
+
+function shouldOpenJobCategory(title) {
+  if (Object.prototype.hasOwnProperty.call(_jobCategoryOpen, title)) {
+    return !!_jobCategoryOpen[title];
+  }
+  return false;
+}
+
+function toggleJobCategory(title, group) {
+  const next = !group.classList.contains('open');
+  _jobCategoryOpen[title] = next;
+  group.classList.toggle('open', next);
+  const chev = group.querySelector('.job-category-chevron');
+  if (chev) chev.textContent = next ? 'v' : '>';
+}
+
+function setJobLibraryCollapsed(collapsed, tmpl) {
+  const lib = document.getElementById('jobLibrary');
+  const picked = document.getElementById('jobTemplatePicked');
+  if (!lib || !picked) return;
+
+  lib.style.display = collapsed ? 'none' : '';
+
+  if (!collapsed || !tmpl) {
+    picked.style.display = 'none';
+    picked.innerHTML = '';
+    return;
+  }
+
+  picked.style.display = 'block';
+  picked.innerHTML =
+    '<div class="job-template-picked-head">' +
+      '<div>' +
+        '<div class="job-template-picked-label">Template selected</div>' +
+        '<div class="job-template-picked-name">' + (tmpl.name || tmpl.code || 'Job Template') + '</div>' +
+        '<div class="job-template-picked-desc">' + (tmpl.desc || jobCategoryLabel(tmpl)) + '</div>' +
+      '</div>' +
+      '<button class="job-template-picked-btn" type="button" onclick="reopenJobLibrary()">Change Template</button>' +
+    '</div>';
+}
+
+function reopenJobLibrary() {
+  setJobLibraryCollapsed(false, null);
+  const jobSearch = document.getElementById('jobSearch');
+  if (jobSearch) jobSearch.focus();
+}
+
+function jumpToJobDetails() {
+  const anchor = document.getElementById('jobDetailsAnchor');
+  const descEl = document.getElementById('jobDesc');
+  if (anchor && typeof anchor.scrollIntoView === 'function') {
+    anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  setTimeout(function() {
+    if (descEl && typeof descEl.focus === 'function') descEl.focus();
+  }, 220);
+}
+
+function getTemplateTaskDesc(tmpl, code) {
+  return (tmpl && (tmpl.taskDesc || tmpl.name)) || code || '';
 }
 
 function makeJobCard(t, count, isLearned) {
@@ -417,10 +861,10 @@ function makeJobCard(t, count, isLearned) {
   nameWrap.appendChild(nameEl);
   nameWrap.appendChild(descEl);
 
-  // ✏️ Edit button — opens template editor inline without leaving the PSI
+  // âœï¸ Edit button â€” opens template editor inline without leaving the PSI
   const editBtn = document.createElement('button');
   editBtn.className   = 'jc-edit-btn';
-  editBtn.textContent = '✏️';
+  editBtn.textContent = 'Edit';
   editBtn.title       = 'Edit this template';
   editBtn.onclick     = function(e) {
     e.stopPropagation();
@@ -454,8 +898,13 @@ function selectJob(code, tmpl) {
   const locEl   = document.getElementById('jobLoc');
   const numEl   = document.getElementById('jobNumber');
   const mustEl  = document.getElementById('jobMuster');
+  var aiPack = (window.AIEngine && typeof AIEngine.generateTaskPack === 'function')
+    ? AIEngine.generateTaskPack(tmpl.taskDesc || tmpl.name || code, tmpl)
+    : null;
 
-  if (descEl  && tmpl.taskDesc)    descEl.value  = tmpl.taskDesc;
+  if (descEl) {
+    descEl.value = getTemplateTaskDesc(tmpl, code);
+  }
   if (locEl   && tmpl.taskLoc)     locEl.value   = tmpl.taskLoc;
   if (numEl   && tmpl.jobNumber)   numEl.value   = tmpl.jobNumber;
   if (mustEl  && tmpl.musterPoint) mustEl.value  = tmpl.musterPoint;
@@ -466,7 +915,11 @@ function selectJob(code, tmpl) {
   // Pre-fill task / hazard / control text
   // New format: template stores text directly (set via template editor)
   // Old format: template stores taskRows array (built-in templates)
-  if (tmpl.taskStepsText != null || tmpl.hazardText != null || tmpl.controlText != null) {
+  if (aiPack) {
+    st.taskStepsText = aiPack.taskStepsText || '';
+    st.hazardText    = aiPack.hazardText    || '';
+    st.controlText   = aiPack.controlText   || '';
+  } else if (tmpl.taskStepsText != null || tmpl.hazardText != null || tmpl.controlText != null) {
     st.taskStepsText = tmpl.taskStepsText || '';
     st.hazardText    = tmpl.hazardText    || '';
     st.controlText   = tmpl.controlText   || '';
@@ -493,15 +946,37 @@ function selectJob(code, tmpl) {
   const regenBtn = document.getElementById('regenWordingBtn');
   if (regenBtn) regenBtn.style.display = getWording(code) ? 'inline-flex' : 'none';
 
-  schedSave();
-  toast('✓ ' + tmpl.name + ' loaded');
+  var record = savePSI({});
+  toast(tmpl.name + ' loaded');
+  updateLiftRequirementUI({
+    jobCode: code,
+    hazards: Array.from(st.hazards),
+    conditions: st.conditions,
+  });
+  maybePromptLiftLink(record);
+  if (window.AIEngine && typeof AIEngine.generateTaskPackAsync === 'function') {
+    AIEngine.generateTaskPackAsync(tmpl.taskDesc || tmpl.name || code, tmpl).then(function(remotePack) {
+      if (!remotePack || _selJob !== code) return;
+      st.taskStepsText = remotePack.taskStepsText || st.taskStepsText;
+      st.hazardText    = remotePack.hazardText || st.hazardText;
+      st.controlText   = remotePack.controlText || st.controlText;
+      renderTasks();
+      savePSI({
+        jobTitle: remotePack.shortTitle || (tmpl && tmpl.name) || '',
+        taskDesc: getTemplateTaskDesc(tmpl, code)
+      });
+      toastAISource(remotePack, 'Wording source:');
+    });
+  }
 
   // Re-render library to show active state
   renderJobLib((document.getElementById('jobSearch') || {}).value || '');
+  setJobLibraryCollapsed(true, tmpl);
+  jumpToJobDetails();
 }
 
 
-// ── WEATHER HAZARD AUTO-ADD ───────────────────────────────────
+// â”€â”€ WEATHER HAZARD AUTO-ADD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Silently adds weather-relevant hazards to st.hazards when conditions warrant.
 
 function autoAddWeatherHazards() {
@@ -511,14 +986,14 @@ function autoAddWeatherHazards() {
 
   var added = [];
 
-  // Cold or hot → heat stress / cold exposure
+  // Cold or hot â†’ heat stress / cold exposure
   if (temp !== null && (temp <= 0 || temp >= 30)) {
     if (!st.hazards.has('env_heat_stress_cold_exposure')) {
       st.hazards.add('env_heat_stress_cold_exposure');
       added.push(temp <= 0 ? 'Cold Exposure' : 'Heat Stress');
     }
   }
-  // Rain, snow, heavy showers → weather conditions + slip/trip
+  // Rain, snow, heavy showers â†’ weather conditions + slip/trip
   if (code !== null && code >= 51) {
     if (!st.hazards.has('env_weather_conditions')) {
       st.hazards.add('env_weather_conditions');
@@ -529,7 +1004,7 @@ function autoAddWeatherHazards() {
       added.push('Slip / Trip');
     }
   }
-  // Fog → low lighting
+  // Fog â†’ low lighting
   if (code !== null && (code === 45 || code === 48)) {
     if (!st.hazards.has('env_lighting_levels_too_low')) {
       st.hazards.add('env_lighting_levels_too_low');
@@ -543,7 +1018,7 @@ function autoAddWeatherHazards() {
 }
 
 
-// ── JOB MATCHING — inline suggestions while typing ────────────
+// â”€â”€ JOB MATCHING â€” inline suggestions while typing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function onJobDescInput() {
   const desc = (document.getElementById('jobDesc') || {}).value || '';
@@ -577,7 +1052,7 @@ function showJobMatches(text) {
 }
 
 
-// ── CONDITION PANEL ────────────────────────────────────────────
+// â”€â”€ CONDITION PANEL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function toggleCondition(key, el) {
   if (st.conditions[key]) {
@@ -600,9 +1075,10 @@ function applyConditionPanel() {
   st.ppe     = new Set(result.ppe);
   renderHazards(result.autoAdded);
   renderPPE();
-  schedSave();
+  var record = savePSI({});
   const n = result.autoAdded.length;
-  toast('✓ Conditions applied' + (n > 0 ? ' — ' + n + ' hazard' + (n > 1 ? 's' : '') + ' auto-added' : ''));
+  toast('Conditions applied' + (n > 0 ? ' - ' + n + ' hazard' + (n > 1 ? 's' : '') + ' auto-added' : ''));
+  maybePromptLiftLink(record);
 }
 
 function resetConditionPanel() {
@@ -620,17 +1096,20 @@ function restoreConditionPanel(conditions) {
 }
 
 
-// ── REGENERATE WORDING ─────────────────────────────────────────
+// â”€â”€ REGENERATE WORDING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function regenerateWording() {
   if (!_selJob) { toast('Select a job type first'); return; }
-  const result = applyWording(_selJob);
+  var currentDesc = ((document.getElementById('jobDesc') || {}).value || '');
+  var tmpl = matchJobType((_selJob || '') + ' ' + currentDesc).find(function(item) {
+    return item.code === _selJob;
+  }) || null;
+  var descEl = document.getElementById('jobDesc');
+  if (descEl) descEl.value = getTemplateTaskDesc(tmpl, _selJob);
+  const result = (window.AIEngine && typeof AIEngine.regenerateForCurrentJob === 'function')
+    ? AIEngine.regenerateForCurrentJob(_selJob, currentDesc, tmpl)
+    : applyWording(_selJob);
   if (!result) { toast('No wording variants for this template'); return; }
-
-  if (result.task) {
-    const descEl = document.getElementById('jobDesc');
-    if (descEl) descEl.value = result.task;
-  }
 
   // Populate the 3 text areas from wording variant
   st.taskStepsText = result.taskStepsText || '';
@@ -638,13 +1117,26 @@ function regenerateWording() {
   st.controlText   = result.controlText   || '';
   renderTasks();
   schedSave();
-  toast('↺ Wording variant ' + result.variantNum + ' of ' + result.totalVariants);
+  savePSI({ taskDesc: getTemplateTaskDesc(tmpl, _selJob) });
+  toast('Wording refreshed');
+  if (window.AIEngine && typeof AIEngine.regenerateForCurrentJobAsync === 'function') {
+    AIEngine.regenerateForCurrentJobAsync(_selJob, currentDesc, tmpl).then(function(remoteResult) {
+      if (!remoteResult) return;
+      st.taskStepsText = remoteResult.taskStepsText || st.taskStepsText;
+      st.hazardText    = remoteResult.hazardText    || st.hazardText;
+      st.controlText   = remoteResult.controlText   || st.controlText;
+      renderTasks();
+      schedSave();
+      savePSI({ taskDesc: getTemplateTaskDesc(tmpl, _selJob) });
+      toastAISource(remoteResult, 'Wording source:');
+    });
+  }
 }
 
 
-// ═══════════════════════════════════════════════════
-// STEP 2 — TASK STEPS
-// ═══════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// STEP 2 â€” TASK STEPS
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function renderTasks() {
   // Populate the 3 separate text areas from state
@@ -672,9 +1164,9 @@ function onTaskTextInput() {
 }
 
 
-// ═══════════════════════════════════════════════════
-// STEP 3 — PPE
-// ═══════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// STEP 3 â€” PPE
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function renderPPE() {
   const grid = document.getElementById('ppeGrid');
@@ -712,9 +1204,9 @@ function renderPPE() {
 }
 
 
-// ═══════════════════════════════════════════════════
-// STEP 4 — WORKERS
-// ═══════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// STEP 4 â€” WORKERS
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function renderWorkers() {
   const container = document.getElementById('workerRows');
@@ -811,7 +1303,7 @@ function makeWorkerRow(worker, idx) {
   // Delete button (don't allow deleting the only row)
   const del = document.createElement('button');
   del.className   = 'worker-del-btn';
-  del.innerHTML   = '×';
+  del.innerHTML   = 'X';
   del.title       = 'Remove worker';
   del.onclick     = (function(i) {
     return function() {
@@ -831,7 +1323,7 @@ function makeWorkerRow(worker, idx) {
   return row;
 }
 
-// ── WORKER NAME AUTOCOMPLETE ──────────────────────────────────
+// â”€â”€ WORKER NAME AUTOCOMPLETE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 let _workerAutoTarget = null; // {input, workerIdx}
 
@@ -888,7 +1380,7 @@ function selectWorkerName(name, workerIdx) {
   // Try to auto-load signature from sheets
   sheetsFetchSignature(name, 'full').then(function(strokes) {
     if (strokes && strokes.length) {
-      toast(name + ' — signature pre-loaded');
+      toast(name + ' - signature pre-loaded');
       // Store in local memory for sig step
       const png = strokesToPNG(strokes, 400, 120);
       saveSignatureToMem(name, strokes, png);
@@ -911,29 +1403,37 @@ function addWorkerRow() {
 }
 
 
-// ═══════════════════════════════════════════════════
-// STEP 5 — WORKER SIGNATURES
-// ═══════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// STEP 5 â€” WORKER SIGNATURES
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function renderSigStep() {
   const psi = loadPSI(me.activePSI);
   const isApproved       = psi && psi.approved;
   const workerFieldsOpen = psi ? (psi.worker_fields_open !== false) : true;
   const workerCanSign    = !isApproved || workerFieldsOpen;
+  const needsLift = psiNeedsLift(psi || {});
+  const hasLift = !!(psi && psi.liftUnitKey);
 
-  // ── Approved banner ──────────────────────────────────────
+  // â”€â”€ Approved banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const banner = document.getElementById('approvedBanner');
   if (banner) {
     if (isApproved) {
       banner.style.display = '';
       if (!workerFieldsOpen) {
         banner.className   = 'approved-banner locked';
-        banner.textContent = '🔒 PSI Approved — Signatures locked by supervisor';
+        banner.textContent = 'PSI Approved - Signatures locked by supervisor';
       } else {
         banner.className   = 'approved-banner';
-        banner.textContent = '✅ PSI Approved by ' + (psi.approvedBy || 'Supervisor') +
-          ' — You can still add your signature below';
+        banner.textContent = 'PSI Approved by ' + (psi.approvedBy || 'Supervisor') +
+          ' - You can still add your signature below';
       }
+    } else if (psi && psi.reviewStatus === 'returned') {
+      banner.style.display = '';
+      banner.className = 'pending-banner';
+      banner.textContent = 'Returned for changes' +
+        (psi.reviewAssignedTo ? ' for ' + psi.reviewAssignedTo : '') +
+        ': ' + (psi.reviewNote || 'See supervisor note');
     } else {
       banner.style.display = 'none';
     }
@@ -943,7 +1443,7 @@ function renderSigStep() {
   st.workers = st.workers.filter(function(w) { return w.name && w.name.trim(); });
 
   // Auto-add logged-in user if worker fields are open and they're not listed
-  if (workerCanSign && me.role !== 'supervisor') {
+  if (workerCanSign && !userHasFullAccess()) {
     const alreadyListed = st.workers.some(function(w) {
       return w.name && w.name.trim().toLowerCase() === (me.name || '').trim().toLowerCase();
     });
@@ -956,7 +1456,7 @@ function renderSigStep() {
   renderSigPanel();
 
   // Disable signature panel if worker fields are locked
-  if (isApproved && !workerFieldsOpen && me.role !== 'supervisor') {
+  if (isApproved && !workerFieldsOpen && !userHasFullAccess()) {
     const picker = document.getElementById('workerPicker');
     if (picker) {
       picker.querySelectorAll('button').forEach(function(b) { b.disabled = true; });
@@ -966,52 +1466,85 @@ function renderSigStep() {
   // Supervisor sign-off button
   const btnSupSign = document.getElementById('btnSupSign');
   if (btnSupSign) {
-    btnSupSign.style.display = me.role === 'supervisor' ? '' : 'none';
+    btnSupSign.style.display = userHasFullAccess() ? '' : 'none';
   }
 
-  // Submit button — hide for locked PSIs, hide if already submitted
+  // Submit button â€” hide for locked PSIs, hide if already submitted
   const btnSubmit = document.getElementById('btnSubmit');
   if (btnSubmit) {
     if (isApproved) {
       btnSubmit.style.display = 'none';
     } else if (psi && psi.submittedForApproval) {
       btnSubmit.style.display = '';
-      btnSubmit.textContent   = '⏳ Submitted — Awaiting Approval';
+      btnSubmit.textContent   = 'In Supervisor Review';
       btnSubmit.disabled      = true;
       btnSubmit.style.opacity = '0.6';
     } else {
       btnSubmit.style.display = '';
-      btnSubmit.textContent   = 'Submit for Approval';
-      btnSubmit.disabled      = false;
-      btnSubmit.style.opacity = '';
+      btnSubmit.textContent   = needsLift && !hasLift ? 'Select Lift Unit First' :
+        (!userRequiresSupervisorReview()
+          ? 'Complete & Download PDF'
+          : (psi && psi.reviewStatus === 'returned' ? 'Send Back to Supervisor' : 'Save for Review'));
+      btnSubmit.disabled      = !!(needsLift && !hasLift);
+      btnSubmit.style.opacity = needsLift && !hasLift ? '0.6' : '';
     }
   }
+  updateLiftRequirementUI(psi || {});
 }
 
 
-// ── SUBMIT FOR APPROVAL ───────────────────────────────────────
+// â”€â”€ SUBMIT FOR APPROVAL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function submitForApproval() {
   const workers = st.workers.filter(function(w) { return w.name; });
   if (workers.length === 0) { toast('Add workers before submitting'); return; }
-
-  savePSI({ submittedForApproval: true });
+  const psi = savePSI({}) || loadPSI(me.activePSI) || {};
+  if (typeof confirmPSISubmissionCheck === 'function' && !confirmPSISubmissionCheck(psi)) {
+    return;
+  }
+  if (psiNeedsLift(psi) && !psi.liftUnitKey) {
+    toast('Select a lift unit before submitting');
+    if (typeof openLiftLinkModal === 'function') openLiftLinkModal();
+    return;
+  }
 
   // Learn hazard selections for this job type
   if (_selJob && typeof recordHazardHistory === 'function') {
     recordHazardHistory(_selJob, Array.from(st.hazards), Array.from(st.customHazards));
   }
 
-  toast('✓ Submitted for supervisor approval');
+  if (!userRequiresSupervisorReview()) {
+    savePSI({
+      submittedForApproval: false,
+      reviewStatus: '',
+      reviewAssignedTo: '',
+      reviewNote: '',
+      reviewedBy: me.name || '',
+      reviewedAt: Date.now(),
+      approved: true,
+      approvedBy: me.name || '',
+      approvedAt: Date.now(),
+    });
+    var completedPsi = loadPSI(me.activePSI) || psi;
+    if (typeof buildPDFWithSigs === 'function') buildPDFWithSigs(completedPsi, { isFinal: true });
+    else if (typeof buildPDF === 'function') buildPDF(completedPsi);
+    toast('PSI completed and PDF downloaded');
+    setTimeout(function() { edBack(); }, 800);
+    return;
+  }
+
+  savePSI({ submittedForApproval: true, reviewStatus: 'submitted', reviewAssignedTo: '', reviewNote: '', reviewedBy: '', reviewedAt: null });
+
+  toast('Saved and sent for supervisor review');
 
   // Return to dashboard after short delay
   setTimeout(function() { edBack(); }, 800);
 }
 
 
-// ═══════════════════════════════════════════════════
-// STEP 6 — SUPERVISOR SIGN-OFF
-// ═══════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// STEP 6 â€” SUPERVISOR SIGN-OFF
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function renderApproveStep() {
   const workers = st.workers.filter(function(w) { return w.name; });
@@ -1068,7 +1601,11 @@ function approvePSI() {
     approvedBy:    name,
     approvedAt:    Date.now(),
     supName:       name,
+    reviewStatus:  'approved',
     supSigStrokes: strokes,
+    reviewNote:    '',
+    reviewedBy:    '',
+    reviewedAt:    null,
     supSigPng:     png,
   });
 
@@ -1080,7 +1617,7 @@ function approvePSI() {
   const psi = loadPSI(me.activePSI);
   saveLearnedTemplate(psi);
   buildPDFWithSigs(psi, { isFinal: true, supStrokes: strokes, supPng: png });
-  toast('✅ PSI approved and PDF downloaded');
+  toast('PSI approved and PDF downloaded');
 
   setTimeout(function() { edBack(); }, 500);
 }

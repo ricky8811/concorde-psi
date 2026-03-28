@@ -43,6 +43,215 @@ function ensureFirebaseAuth(callback) {
   });
 }
 
+function firebaseGetAuth() {
+  if (!firebase.apps.length) return null;
+  try { return firebase.auth(); } catch (e) { return null; }
+}
+
+function firebaseLoadUserProfile(uid) {
+  if (!db || !uid) return Promise.resolve(null);
+  return db.collection('users').doc(uid).get().then(function(doc) {
+    return doc.exists ? (doc.data() || null) : null;
+  }).catch(function() { return null; });
+}
+
+function firebaseWorkflowDefaults(roleHint, tradeHint) {
+  var role = (roleHint === 'supervisor' || roleHint === 'admin') ? roleHint : 'worker';
+  var trade = String(tradeHint || '').trim().toLowerCase() || 'electrician';
+  if (role === 'supervisor' || role === 'admin') {
+    return { trade: 'electrician', workflowType: 'full_review', requiresSupervisorReview: true };
+  }
+  if (trade === 'electrician') {
+    return { trade: 'electrician', workflowType: 'full_review', requiresSupervisorReview: true };
+  }
+  return { trade: trade, workflowType: 'teams_export', requiresSupervisorReview: false };
+}
+
+function firebaseCanUseApp(profile) {
+  if (!profile) return false;
+  return profile.active !== false && profile.approvalStatus !== 'pending';
+}
+
+function firebaseEnsureUserProfile(user, roleHint, nameHint, tradeHint) {
+  if (!db || !user || !user.uid) return Promise.resolve(null);
+  var docRef = db.collection('users').doc(user.uid);
+  return docRef.get().then(function(doc) {
+    var defaults = firebaseWorkflowDefaults(roleHint, tradeHint);
+    if (doc.exists && doc.data()) {
+      var existing = doc.data() || {};
+      var patch = {};
+      if (!existing.trade) patch.trade = defaults.trade;
+      if (!existing.workflowType) patch.workflowType = defaults.workflowType;
+      if (typeof existing.requiresSupervisorReview !== 'boolean') patch.requiresSupervisorReview = defaults.requiresSupervisorReview;
+      if (!existing.approvalStatus) patch.approvalStatus = existing.active === false ? 'pending' : 'approved';
+      if (!existing.role) patch.role = (roleHint === 'supervisor' || roleHint === 'admin') ? roleHint : 'worker';
+      if (!existing.name) patch.name = nameHint || user.displayName || (user.email ? user.email.split('@')[0] : 'Worker');
+      if (Object.keys(patch).length) {
+        patch.updatedAt = Date.now();
+        return docRef.set(patch, { merge: true }).then(function() {
+          return Object.assign({}, existing, patch);
+        });
+      }
+      return existing;
+    }
+    var fallbackName = nameHint || user.displayName || (user.email ? user.email.split('@')[0] : 'Worker');
+    var profile = {
+      uid: user.uid,
+      email: user.email || '',
+      name: fallbackName,
+      role: (roleHint === 'supervisor' || roleHint === 'admin') ? roleHint : 'worker',
+      trade: defaults.trade,
+      workflowType: defaults.workflowType,
+      requiresSupervisorReview: defaults.requiresSupervisorReview,
+      active: true,
+      approvalStatus: 'approved',
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    return docRef.set(profile, { merge: true }).then(function() {
+      return profile;
+    });
+  }).catch(function() { return null; });
+}
+
+function firebaseSignInWithEmail(email, password, roleHint) {
+  var auth = firebaseGetAuth();
+  if (!auth) return Promise.reject(new Error('Firebase auth is not available.'));
+  return auth.signInWithEmailAndPassword(email, password).then(function(cred) {
+    return firebaseEnsureUserProfile(cred.user, roleHint || 'worker').then(function(profile) {
+      if (!firebaseCanUseApp(profile)) {
+        return auth.signOut().catch(function() {}).then(function() {
+          throw new Error('Your account is waiting for supervisor approval.');
+        });
+      }
+      return {
+        user: cred.user,
+        profile: profile
+      };
+    });
+  });
+}
+
+function firebaseCreateWorkerAccount(name, email, password, trade) {
+  var auth = firebaseGetAuth();
+  if (!auth) return Promise.reject(new Error('Firebase auth is not available.'));
+  return auth.createUserWithEmailAndPassword(email, password).then(function(cred) {
+    return firebaseEnsureUserProfile(cred.user, 'worker', name || '', trade || 'electrician').then(function(profile) {
+      var pendingPatch = {
+        active: false,
+        approvalStatus: 'pending',
+        updatedAt: Date.now()
+      };
+      return db.collection('users').doc(cred.user.uid).set(pendingPatch, { merge: true }).then(function() {
+        return auth.signOut().catch(function() {}).then(function() {
+          return {
+            user: cred.user,
+            profile: Object.assign({}, profile, pendingPatch)
+          };
+        });
+      });
+    });
+  });
+}
+
+function firebaseRestoreAccountSession() {
+  var auth = firebaseGetAuth();
+  if (!auth) return Promise.resolve(null);
+
+  function loadUser(user) {
+    if (!user || !user.uid || user.isAnonymous) return Promise.resolve(null);
+    return firebaseEnsureUserProfile(user).then(function(profile) {
+      if (!firebaseCanUseApp(profile)) {
+        return auth.signOut().catch(function() {}).then(function() { return null; });
+      }
+      return {
+        user: user,
+        profile: profile
+      };
+    }).catch(function() {
+      return null;
+    });
+  }
+
+  if (auth.currentUser && !auth.currentUser.isAnonymous) {
+    return loadUser(auth.currentUser);
+  }
+
+  return new Promise(function(resolve) {
+    var settled = false;
+    var timeout = setTimeout(function() {
+      if (settled) return;
+      settled = true;
+      try { unsub(); } catch (e) {}
+      resolve(null);
+    }, 1500);
+
+    var unsub = auth.onAuthStateChanged(function(user) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      try { unsub(); } catch (e) {}
+      loadUser(user).then(resolve);
+    }, function() {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      try { unsub(); } catch (e) {}
+      resolve(null);
+    });
+  });
+}
+
+function firebaseSignOutUser() {
+  var auth = firebaseGetAuth();
+  if (!auth) return Promise.resolve();
+  return auth.signOut().catch(function() {});
+}
+
+function firebaseListPendingUsers() {
+  if (!db) return Promise.resolve([]);
+  return db.collection('users')
+    .where('approvalStatus', '==', 'pending')
+    .get()
+    .then(function(snapshot) {
+      var rows = [];
+      snapshot.forEach(function(doc) {
+        var data = doc.data() || {};
+        rows.push(Object.assign({ uid: doc.id }, data));
+      });
+      rows.sort(function(a, b) {
+        return (a.createdAt || 0) - (b.createdAt || 0);
+      });
+      return rows;
+    })
+    .catch(function() { return []; });
+}
+
+function firebaseApproveUserAccount(uid, trade) {
+  if (!db || !uid) return Promise.reject(new Error('Account approval is not available.'));
+  var defaults = firebaseWorkflowDefaults('worker', trade || 'electrician');
+  return db.collection('users').doc(uid).set({
+    trade: defaults.trade,
+    workflowType: defaults.workflowType,
+    requiresSupervisorReview: defaults.requiresSupervisorReview,
+    active: true,
+    approvalStatus: 'approved',
+    updatedAt: Date.now()
+  }, { merge: true });
+}
+
+function firebaseUpdateUserProfile(uid, patch) {
+  if (!db || !uid) return Promise.reject(new Error('Profile update is not available.'));
+  patch = Object.assign({}, patch || {}, { updatedAt: Date.now() });
+  return db.collection('users').doc(uid).set(patch, { merge: true });
+}
+
+function firebaseUpdateCurrentUserPassword(password) {
+  var auth = firebaseGetAuth();
+  if (!auth || !auth.currentUser) return Promise.reject(new Error('No signed-in user.'));
+  return auth.currentUser.updatePassword(password);
+}
+
 
 // ─── MIRROR WRITES (fire-and-forget) ─────────────────────────
 

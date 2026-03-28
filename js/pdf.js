@@ -84,7 +84,7 @@ async function buildPDF(psi, opts) {
     sf(PDF_FIELDS.date,        psi.jobDate     || '');
     sf(PDF_FIELDS.time,        psi.jobTime     || '');
     sf(PDF_FIELDS.jobNumber,   psi.jobNumber   || '');
-    sf(PDF_FIELDS.taskDesc,    psi.taskDesc    || '');
+    sf(PDF_FIELDS.taskDesc,    getShortPSIPDFLabel(psi));
     sf(PDF_FIELDS.taskLoc,     psi.taskLoc     || '');
     sf(PDF_FIELDS.musterPoint, psi.musterPoint || '');
     sf(PDF_FIELDS.supName,     psi.supName     || psi.approvedBy || '');
@@ -182,29 +182,19 @@ async function buildPDF(psi, opts) {
       drawSigLines(page, entry.strokes, rects[idx], rgb);
     }
 
-    // 14. Save and download
+    // 14. Save and output
     const outBytes = await pdfDoc.save();
-    const blob     = new Blob([outBytes], { type: 'application/pdf' });
-    const url      = URL.createObjectURL(blob);
 
     const jobCode  = psi.jobCode || '';
     const dateStr  = fmtDateWords(psi.jobDate);
     const tmpl     = (typeof BUILTIN_TEMPLATES !== 'undefined' && BUILTIN_TEMPLATES[jobCode])
                      || (typeof loadLearned === 'function' && loadLearned()[jobCode])
                      || null;
-    const tmplName = (tmpl && tmpl.name) ? tmpl.name : (psi.taskDesc || jobCode || 'PSI');
+    const tmplName = (tmpl && tmpl.name) ? tmpl.name : getShortPSIPDFLabel(psi, 48, false);
     const nameSlug = tmplName.replace(/\s+/g, '-');
     const shortId  = (psi.id || '').slice(0, 5);
     const fname    = dateStr + ' - PSI ' + nameSlug + (shortId ? ' ' + shortId : '') + '.pdf';
-
-    const a = document.createElement('a');
-    a.href     = url;
-    a.download = fname;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
-
-    toast('📄 PDF downloaded!');
+    outputPDFBytes(outBytes, fname, opts);
 
   } catch(err) {
     console.error('[buildPDF]', err);
@@ -262,7 +252,8 @@ function drawSigLines(page, strokes, rect, rgb) {
 
 // ── BUILD MEWP INSPECTION PDF ─────────────────────────────────
 
-async function buildMEWPPDF(unitData, sigStrokes, supStrokes) {
+async function buildMEWPPDF(unitData, sigStrokes, supStrokes, opts) {
+  opts = opts || {};
   if (!MEWP_PDF_B64) {
     toast('⚠ MEWP PDF template not loaded — paste base64 into pdf.js');
     return;
@@ -335,26 +326,49 @@ async function buildMEWPPDF(unitData, sigStrokes, supStrokes) {
     if (unitData.supName) sf('Supervisors name', unitData.supName);
 
     const outBytes = await pdfDoc.save();
-    const blob     = new Blob([outBytes], { type: 'application/pdf' });
-    const url      = URL.createObjectURL(blob);
-
     const dateStr = fmtDateWords(unitData.date);
     const unitStr = (unitData.unitNum || 'unit').replace(/\s+/g, '-');
     const fname   = dateStr + ' - MEWP ' + unitStr + '.pdf';
-
-    const a = document.createElement('a');
-    a.href     = url;
-    a.download = fname;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
-
-    toast('📄 MEWP PDF downloaded!');
+    outputPDFBytes(outBytes, fname, opts);
 
   } catch(err) {
     console.error('[buildMEWPPDF]', err);
     toast('⚠ MEWP PDF error: ' + (err.message || 'unknown'));
   }
+}
+
+function outputPDFBytes(outBytes, fname, opts) {
+  opts = opts || {};
+  const blob = new Blob([outBytes], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+
+  if (typeof opts.onReady === 'function') {
+    opts.onReady(url, fname, blob);
+    return;
+  }
+
+  if (opts.preview) {
+    const win = window.open(url, '_blank', 'noopener');
+    if (!win) {
+      toast('Allow pop-ups to preview PDFs.');
+      URL.revokeObjectURL(url);
+      return;
+    }
+    setTimeout(function() { URL.revokeObjectURL(url); }, 60000);
+    toast('📄 PDF opened in new tab');
+    return;
+  }
+
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function() {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 100);
+  toast('📄 PDF downloaded!');
 }
 
 

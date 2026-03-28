@@ -154,9 +154,12 @@ function openPresetModal(t, isLearned, fromEditor) {
   const titleEl = document.getElementById('presetModalTitle');
   if (titleEl) titleEl.textContent = 'Edit: ' + t.name;
 
-  _setVal('pmName',     saved.name       != null ? saved.name       : t.name);
-  _setVal('pmDesc',     saved.desc       != null ? saved.desc       : (t.desc       || ''));
-  _setVal('pmTaskDesc', saved.taskDesc   != null ? saved.taskDesc   : (t.taskDesc   || ''));
+  const taskDescValue = saved.taskDesc != null
+    ? saved.taskDesc
+    : ((saved.desc != null ? saved.desc : '') || t.taskDesc || t.desc || t.name || '');
+  _setVal('pmTaskDesc', taskDescValue);
+  _setVal('pmName',     saved.name       != null ? saved.name       : _deriveTemplateName(taskDescValue || t.name));
+  _setVal('pmDesc',     saved.desc       != null ? saved.desc       : taskDescValue);
   _setVal('pmLoc',      saved.taskLoc    != null ? saved.taskLoc    : (t.taskLoc    || ''));
   _setVal('pmMuster',   saved.musterPoint != null ? saved.musterPoint : (t.musterPoint || t.muster || ''));
 
@@ -179,6 +182,12 @@ function openPresetModal(t, isLearned, fromEditor) {
 function _setVal(id, val) {
   const el = document.getElementById(id);
   if (el) el.value = val || '';
+}
+
+function _deriveTemplateName(taskDesc) {
+  const words = String(taskDesc || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  if (!words.length) return '';
+  return words.slice(0, 4).join(' ');
 }
 
 function closePresetModal() {
@@ -206,9 +215,9 @@ function openNewTemplateModal(fromEditor) {
   const titleEl = document.getElementById('presetModalTitle');
   if (titleEl) titleEl.textContent = 'New Template';
 
+  _setVal('pmTaskDesc', '');
   _setVal('pmName',     '');
   _setVal('pmDesc',     '');
-  _setVal('pmTaskDesc', '');
   _setVal('pmLoc',      '');
   _setVal('pmMuster',   '');
 
@@ -349,9 +358,9 @@ function savePresetEdits() {
   if (!_editingCode) return;
 
   // Collect basic fields
-  const name     = (_getVal('pmName')     || '').trim();
-  const desc     = (_getVal('pmDesc')     || '').trim();
   const taskDesc = (_getVal('pmTaskDesc') || '').trim();
+  const name     = _deriveTemplateName(taskDesc);
+  const desc     = taskDesc;
   const taskLoc  = (_getVal('pmLoc')      || '').trim();
   const muster   = (_getVal('pmMuster')   || '').trim();
 
