@@ -187,17 +187,35 @@ async function buildPDF(psi, opts) {
 
     const jobCode  = psi.jobCode || '';
     const dateStr  = fmtDateWords(psi.jobDate);
+    const approvedLearned = (typeof getApprovedLearnedTemplates === 'function')
+      ? getApprovedLearnedTemplates()
+      : [];
     const tmpl     = (typeof BUILTIN_TEMPLATES !== 'undefined' && BUILTIN_TEMPLATES[jobCode])
-                     || (typeof loadLearned === 'function' && loadLearned()[jobCode])
+                     || approvedLearned.find(function(item) { return item.code === jobCode; })
                      || null;
     const tmplName = (tmpl && tmpl.name) ? tmpl.name : getShortPSIPDFLabel(psi, 48, false);
     const nameSlug = tmplName.replace(/\s+/g, '-');
-    const shortId  = (psi.id || '').slice(0, 5);
-    const fname    = dateStr + ' - PSI ' + nameSlug + (shortId ? ' ' + shortId : '') + '.pdf';
+    const fname    = dateStr + ' - PSI ' + nameSlug + '.pdf';
     outputPDFBytes(outBytes, fname, opts);
 
   } catch(err) {
     console.error('[buildPDF]', err);
+    if (opts && opts.downloadWindow) {
+      try {
+        var safeMsg = String((err && err.message) || 'unknown error').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        opts.downloadWindow.document.open();
+        opts.downloadWindow.document.write(
+          '<!doctype html><html><head><title>PDF Error</title>' +
+          '<meta name="viewport" content="width=device-width,initial-scale=1"></head>' +
+          '<body style="font-family:Arial,sans-serif;padding:24px;background:#f6f1eb;color:#2a211b;">' +
+          '<div style="max-width:420px;margin:48px auto;padding:24px;background:#fff;border-radius:16px;box-shadow:0 12px 32px rgba(0,0,0,.08);">' +
+          '<h2 style="margin:0 0 12px;">Could not build PDF</h2>' +
+          '<p style="margin:0;">' + safeMsg + '</p>' +
+          '</div></body></html>'
+        );
+        opts.downloadWindow.document.close();
+      } catch (e) {}
+    }
     toast('⚠ PDF error: ' + (err.message || 'unknown'));
   }
 }
@@ -337,17 +355,89 @@ async function buildMEWPPDF(unitData, sigStrokes, supStrokes, opts) {
   }
 }
 
+// ── IN-PAGE PDF DOWNLOAD BANNER ──────────────────────────────
+// Fixed bottom banner with a tappable "Download PDF" link.
+// This is the only reliable path on iOS Safari and mobile Chrome:
+// the user taps the button (fresh user gesture) → download triggers.
+// The pre-opened blank tab approach fails because:
+//   (a) blob URLs created in one context can't be downloaded from another, and
+//   (b) auto-click via setTimeout has no user gesture so browsers block it.
+// blob is the raw Blob object — we create a fresh URL inside the click
+// handler so the createObjectURL + a.click() happen in the same user gesture.
+// This is the only 100% reliable download method across all browsers.
+function showPDFDownloadBanner(blob, fname) {
+  var existing = document.getElementById('_pdfDownloadBanner');
+  if (existing) { try { existing.parentNode.removeChild(existing); } catch(e) {} }
+
+  var banner = document.createElement('div');
+  banner.id = '_pdfDownloadBanner';
+  banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99999;' +
+    'background:#1a1a1a;color:#fff;padding:16px 20px;' +
+    'display:flex;align-items:center;justify-content:space-between;gap:12px;' +
+    'box-shadow:0 -4px 32px rgba(0,0,0,0.55);font-family:Arial,sans-serif;font-size:15px;';
+
+  var msg = document.createElement('span');
+  msg.textContent = '\uD83D\uDCC4 PDF ready \u2014 tap to save';
+  msg.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Download PDF';
+  btn.style.cssText = 'background:#b65428;color:#fff;border:none;cursor:pointer;' +
+    'padding:12px 20px;border-radius:8px;font-weight:700;font-size:15px;white-space:nowrap;flex-shrink:0;';
+
+  var closeBtn = document.createElement('button');
+  closeBtn.textContent = '\u2715';
+  closeBtn.setAttribute('aria-label', 'Dismiss');
+  closeBtn.style.cssText = 'background:none;border:none;color:#fff;font-size:22px;' +
+    'cursor:pointer;padding:2px 8px;opacity:0.7;flex-shrink:0;line-height:1;';
+
+  banner.appendChild(msg);
+  banner.appendChild(btn);
+  banner.appendChild(closeBtn);
+  document.body.appendChild(banner);
+
+  function dismiss() {
+    if (banner.parentNode) banner.parentNode.removeChild(banner);
+  }
+
+  // Create the blob URL and trigger the download INSIDE the click handler.
+  // Both createObjectURL and a.click() run synchronously within the user
+  // gesture — no async gap, no gesture expiry, works on every browser.
+  btn.addEventListener('click', function() {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = fname;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function() {
+      if (a.parentNode) document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 5000);
+    setTimeout(dismiss, 1500);
+  });
+
+  closeBtn.addEventListener('click', dismiss);
+  setTimeout(dismiss, 60000);
+}
+
 function outputPDFBytes(outBytes, fname, opts) {
   opts = opts || {};
   const blob = new Blob([outBytes], { type: 'application/pdf' });
-  const url = URL.createObjectURL(blob);
+
+  // Close any pre-opened blank tab — no longer needed.
+  var openedWin = opts.downloadWindow || null;
+  if (openedWin) { try { if (!openedWin.closed) openedWin.close(); } catch(e) {} }
 
   if (typeof opts.onReady === 'function') {
+    const url = URL.createObjectURL(blob);
     opts.onReady(url, fname, blob);
     return;
   }
 
   if (opts.preview) {
+    const url = URL.createObjectURL(blob);
     const win = window.open(url, '_blank', 'noopener');
     if (!win) {
       toast('Allow pop-ups to preview PDFs.');
@@ -355,20 +445,15 @@ function outputPDFBytes(outBytes, fname, opts) {
       return;
     }
     setTimeout(function() { URL.revokeObjectURL(url); }, 60000);
-    toast('📄 PDF opened in new tab');
+    toast('\uD83D\uDCC4 PDF opened in new tab');
     return;
   }
 
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fname;
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(function() {
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }, 100);
-  toast('📄 PDF downloaded!');
+  // Show the download banner. The banner button creates a fresh blob URL
+  // and triggers the download entirely inside the user's click gesture —
+  // no timing issues, no browser blocking, works on every platform.
+  showPDFDownloadBanner(blob, fname);
+  toast('\uD83D\uDCC4 PDF ready \u2014 tap Download PDF');
 }
 
 

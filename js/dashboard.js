@@ -6,22 +6,33 @@
 let _dashTab   = 'active';
 let _allPSIs   = [];   // active (not approved)
 let _histPSIs  = [];   // approved
+let _statsFilters = {
+  month: String(new Date().getMonth() + 1),
+  year: String(new Date().getFullYear()),
+  worker: 'all',
+  jobType: 'all',
+  status: 'all'
+};
 
 function canCurrentUserSeePSI(psi) {
-  if (!psi) return false;
-  if (me && userHasFullAccess()) return true;
-  var myName = String((me && me.name) || '').trim().toLowerCase();
-  if (!myName) return false;
-  if (String(psi.createdBy || '').trim().toLowerCase() === myName) return true;
-  return (psi.workers || []).some(function(w) {
-    return String((w && w.name) || '').trim().toLowerCase() === myName;
-  });
+  return !!psi && !psi.unpublished;
+}
+
+function isDashInitialPSILoadPending() {
+  return !!(
+    typeof firebaseIsInitialPSISyncPending === 'function' &&
+    firebaseIsInitialPSISyncPending() &&
+    !_allPSIs.length &&
+    !_histPSIs.length
+  );
 }
 
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ REFRESH (reload from storage) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 function refreshDash() {
+  // Do NOT reset _dashTab here — tab state is owned by openDash()/switchTab() only.
+  // Do NOT force the tab here — that causes double-render and fights user tab choice.
   const idx = loadIndex();
   _allPSIs  = [];
   _histPSIs = [];
@@ -43,528 +54,32 @@ function refreshDash() {
   var tabPending = document.getElementById('tabPending');
   var isSup = me && userHasFullAccess();
   if (tabPending) tabPending.style.display = isSup ? '' : 'none';
-
+  if (!isSup && _dashTab === 'pending') _dashTab = 'active';
   updatePendingBadge();
-  renderDash();
+  if (_dashTab === 'pending') renderPendingTab();
+  else if (_dashTab === 'stats') renderStatsTab();
+  else renderDash();
 }
 
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ RENDER Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
-function renderDash() {
-  const query = (document.getElementById('dashSearch') || {}).value || '';
-  const q     = query.toLowerCase().trim();
 
-  // Ã¢â€â‚¬Ã¢â€â‚¬ Active list Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-  const activeList = document.getElementById('activeList');
-  if (activeList) {
-    let items = _allPSIs;   // ALL users see all active PSIs
-
-    items = items.slice().sort(function(a, b) {
-      var aReturned = a && a.reviewStatus === 'returned' ? 1 : 0;
-      var bReturned = b && b.reviewStatus === 'returned' ? 1 : 0;
-      if (aReturned !== bReturned) return bReturned - aReturned;
-      return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
-    });
-
-    // Apply search filter
-    if (q) {
-      items = items.filter(function(p) { return matchesQuery(p, q); });
-    }
-
-    if (items.length === 0) {
-      activeList.innerHTML = renderEmpty(
-        q ? 'No results for "' + query + '"' : 'No active PSIs',
-        q ? 'Try a different search term.' : 'Tap + New PSI to get started.',
-        !q
-      );
-    } else {
-      activeList.innerHTML = '';
-      items.forEach(function(p) {
-        activeList.appendChild(renderPSICard(p, false));
-      });
-    }
-  }
-
-  // Ã¢â€â‚¬Ã¢â€â‚¬ History list (all users can see approved PSIs) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-  const historyList = document.getElementById('historyList');
-  if (historyList) {
-    if (_dashTab !== 'history') {
-      historyList.style.display = 'none';
-    } else {
-      historyList.style.display = 'block';
-
-      let items = _histPSIs;
-      if (q) {
-        items = items.filter(function(p) { return matchesQuery(p, q); });
-      }
-
-      if (items.length === 0) {
-        historyList.innerHTML = renderEmpty(
-          q ? 'No results' : 'No approved PSIs yet',
-          q ? 'Try a different search.' : 'Approved PSIs appear here.',
-          false
-        );
-      } else {
-        historyList.innerHTML = '';
-        items.forEach(function(p) {
-          historyList.appendChild(renderPSICard(p, true));
-        });
-      }
-    }
-  }
-}
 
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ PSI CARD Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
-function renderPSICard(psi, isHist) {
-  const card = document.createElement('div');
-  card.className = 'psi-card';
-  card.onclick   = function(e) {
-    if (e.target.classList.contains('psi-del') ||
-        e.target.classList.contains('psi-approve-btn') ||
-        e.target.classList.contains('psi-dup-btn') ||
-        e.target.classList.contains('psi-initial-btn') ||
-        e.target.classList.contains('psi-draft-btn')) return;
-    openPSI(psi.id);
-  };
 
-  // Badge
-  const badge = document.createElement('div');
-  if (isHist) {
-    badge.className   = 'psi-badge green';
-    badge.textContent = psi.jobCode || 'DONE';
-  } else if (psi.submittedForApproval) {
-    badge.className   = 'psi-badge yellow';
-    badge.textContent = psi.jobCode || 'PSI';
-  } else {
-    badge.className   = 'psi-badge';
-    badge.textContent = psi.jobCode || 'PSI';
-  }
-
-  // Meta
-  const meta  = document.createElement('div');
-  meta.className = 'psi-meta';
-
-  const title = document.createElement('div');
-  title.className   = 'psi-title';
-  title.textContent = psi.taskDesc || 'Untitled PSI';
-
-  const sub = document.createElement('div');
-  sub.className   = 'psi-sub';
-  const parts = [];
-  if (psi.jobDate) parts.push(fmtDisplayDate(psi.jobDate));
-  if (psi.jobNumber) parts.push(psi.jobNumber);
-  if (psi.taskLoc) parts.push(psi.taskLoc);
-  if (psi.createdBy) parts.push(psi.createdBy);
-  sub.textContent = parts.join(' - ');
-
-  meta.appendChild(title);
-  meta.appendChild(sub);
-
-  // Worker pips
-  if (psi.workers && psi.workers.length > 0) {
-    const pips = document.createElement('div');
-    pips.className = 'psi-pips';
-    psi.workers.forEach(function(w, i) {
-      if (!w.name) return;
-      const pip = document.createElement('span');
-      // sigs = local stroke data; sigWorkers = synced name list from other devices
-      var hasSig = (psi.sigs && psi.sigs[i]) ||
-                   (psi.sigWorkers && psi.sigWorkers.indexOf(w.name) !== -1);
-      pip.className = 'pip' + (hasSig ? ' done' : '');
-      pip.title     = w.name;
-      pips.appendChild(pip);
-    });
-    meta.appendChild(pips);
-  }
-
-  // Daily initials row
-  if (psi.initials && psi.initials.length > 0) {
-    const initRow = document.createElement('div');
-    initRow.className = 'psi-initials-row';
-    const breakLabel = { '1st': '1B', 'lunch': 'LN', '2nd': '2B' };
-    initRow.textContent = psi.initials.map(function(i) {
-      const inits = i.name.split(' ').map(function(n) { return n[0]; }).join('');
-      const bl = breakLabel[i.breakType] || '';
-      return inits + (bl ? '-' + bl : '') + ' ' + i.time;
-    }).join('  ');
-    meta.appendChild(initRow);
-  }
-
-  // Pending label for workers
-  if (!isHist && psi.submittedForApproval && !userHasFullAccess()) {
-    const lbl = document.createElement('div');
-    lbl.className   = 'psi-pending-label';
-    lbl.textContent = 'In Supervisor Review';
-    meta.appendChild(lbl);
-  }
-  if (!isHist && psi.reviewStatus === 'returned' && !userHasFullAccess()) {
-    const lbl = document.createElement('div');
-    lbl.className   = 'psi-pending-label';
-    lbl.textContent = 'Returned for changes';
-    meta.appendChild(lbl);
-    if (psi.reviewNote) {
-      const note = document.createElement('div');
-      note.className = 'psi-pending-label';
-      note.textContent = 'Review note: ' + psi.reviewNote;
-      meta.appendChild(note);
-    }
-  }
-
-  // History: approved badge
-  if (isHist && psi.approvedBy) {
-    const lbl = document.createElement('div');
-    lbl.className   = 'psi-pending-label';
-    lbl.style.color = 'var(--green)';
-    lbl.textContent = 'Approved by ' + psi.approvedBy;
-    meta.appendChild(lbl);
-  }
-
-  // Right column Ã¢â‚¬â€ buttons vary by role + PSI state
-  const right = document.createElement('div');
-  right.className = 'psi-right';
-
-  const workerCount = (psi.workers || []).filter(function(w) { return w.name; }).length;
-  // Use local sigs if available; fall back to synced sigWorkers list from other devices
-  const sigCount = Object.keys(psi.sigs || {}).length ||
-                   (psi.sigWorkers ? psi.sigWorkers.length : 0);
-
-  const count = document.createElement('div');
-  count.className   = 'psi-count';
-  count.textContent = sigCount + '/' + workerCount + ' signed';
-  right.appendChild(count);
-
-  const isSup            = userHasFullAccess();
-  const isApproved       = !!psi.approved;
-  const workerFieldsOpen = psi.worker_fields_open !== false;   // default open
-  const isOwner          = psi.createdBy === me.name;
-
-  // Ã¢â€â‚¬Ã¢â€â‚¬ APPROVED PSI BUTTONS Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-  if (isApproved) {
-    // Everyone: re-download PDF
-    const dl = document.createElement('button');
-    dl.className   = 'psi-del';
-    dl.textContent = 'Preview PDF';
-    dl.onclick     = function(e) { e.stopPropagation(); redownload(psi.id); };
-    if (typeof attachPDFHoverPreview === 'function') {
-      attachPDFHoverPreview(dl, function(onReady) {
-        buildPDFWithSigs(loadPSI(psi.id), { isFinal: true, onReady: onReady });
-      });
-    }
-    right.appendChild(dl);
-
-    // Workers: quick Sign on approved cards
-    if (!isSup && workerFieldsOpen) {
-      const signBtn = document.createElement('button');
-      signBtn.className   = 'psi-initial-btn';
-      signBtn.textContent = 'Sign';
-      signBtn.onclick     = function(e) { e.stopPropagation(); openQuickWorkerSign(psi.id); };
-      right.appendChild(signBtn);
-    }
-
-    // Supervisor: re-open, edit, delete
-    if (isSup) {
-      const reopenBtn = document.createElement('button');
-      reopenBtn.className   = 'psi-draft-btn';
-      reopenBtn.textContent = 'Ã¢â€ Âº Re-open';
-      reopenBtn.onclick     = function(e) { e.stopPropagation(); reopenPSI(psi.id); };
-      right.appendChild(reopenBtn);
-
-      const del = document.createElement('button');
-      del.className   = 'psi-del';
-      del.textContent = 'Delete';
-      del.onclick     = function(e) { e.stopPropagation(); deletePSIConfirm(psi.id, psi.taskDesc); };
-      right.appendChild(del);
-    }
-
-  // Ã¢â€â‚¬Ã¢â€â‚¬ ACTIVE / DRAFT PSI BUTTONS Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-  } else {
-    // Supervisor approve button on submitted cards
-    if (isSup && psi.submittedForApproval) {
-      const apBtn = document.createElement('button');
-      apBtn.className   = 'psi-approve-btn';
-      apBtn.textContent = 'Approve';
-      apBtn.onclick     = function(e) { e.stopPropagation(); openApproveModal(psi.id); };
-      right.appendChild(apBtn);
-    }
-
-    // Quick sign available to all on active PSIs
-    const signBtn2 = document.createElement('button');
-    signBtn2.className   = 'psi-initial-btn';
-    signBtn2.textContent = 'Sign';
-    signBtn2.onclick     = function(e) { e.stopPropagation(); openQuickWorkerSign(psi.id); };
-    right.appendChild(signBtn2);
-
-    // Quick initial Ã¢â‚¬â€ available to all on active PSIs
-    const initBtn = document.createElement('button');
-    initBtn.className   = 'psi-initial-btn';
-    initBtn.textContent = 'Ã¢Å“Â Initial';
-    initBtn.onclick     = function(e) { e.stopPropagation(); openQuickSign(psi.id); };
-    right.appendChild(initBtn);
-
-    // Draft PDF Ã¢â‚¬â€ available to all
-    const draftBtn = document.createElement('button');
-    draftBtn.className   = 'psi-draft-btn';
-    draftBtn.textContent = 'Preview PDF';
-    draftBtn.title       = 'Preview draft PDF';
-    draftBtn.onclick     = function(e) { e.stopPropagation(); buildPDFWithSigs(loadPSI(psi.id), { isFinal: false, preview: true }); };
-    if (typeof attachPDFHoverPreview === 'function') {
-      attachPDFHoverPreview(draftBtn, function(onReady) {
-        buildPDFWithSigs(loadPSI(psi.id), { isFinal: false, onReady: onReady });
-      });
-    }
-    right.appendChild(draftBtn);
-
-    // Duplicate Ã¢â‚¬â€ supervisor or owner
-    if (isSup || isOwner) {
-      const dup = document.createElement('button');
-      dup.className   = 'psi-dup-btn';
-      dup.textContent = 'Ã¢Å½Ëœ Dupe';
-      dup.title       = 'Duplicate this PSI';
-      dup.onclick     = function(e) { e.stopPropagation(); duplicatePSI(psi.id); };
-      right.appendChild(dup);
-    }
-
-    // Delete Ã¢â‚¬â€ supervisor or owner only
-    if (isSup || isOwner) {
-      const del = document.createElement('button');
-      del.className   = 'psi-del';
-      del.textContent = 'Delete';
-      del.onclick     = function(e) { e.stopPropagation(); deletePSIConfirm(psi.id, psi.taskDesc); };
-      right.appendChild(del);
-    }
-  }
-
-  card.appendChild(badge);
-  card.appendChild(meta);
-  card.appendChild(right);
-  return card;
-}
 
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ PENDING CARD (supervisor dashboard section) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
-function renderPendCard(psi, liftData) {
-  const card = document.createElement('div');
-  card.className = 'psi-card';
-  card.style.borderLeft = '3px solid var(--accent)';
-  card.style.padding    = '12px 18px';
 
-  card.onclick = function(e) {
-    if (e.target.classList.contains('psi-approve-btn') ||
-        e.target.classList.contains('psi-del')) return;
-    openPSI(psi.id);
-  };
-
-  const meta  = document.createElement('div');
-  meta.className = 'psi-meta';
-
-  const title = document.createElement('div');
-  title.className   = 'psi-title';
-  title.textContent = psi.taskDesc || 'Untitled PSI';
-
-  const sub = document.createElement('div');
-  sub.className   = 'psi-sub';
-  sub.textContent = (psi.createdBy || '') + (psi.taskLoc ? ' Ã‚Â· ' + psi.taskLoc : '');
-
-  meta.appendChild(title);
-  meta.appendChild(sub);
-
-  var linkedLift = null;
-  if (psi.liftUnitKey && liftData && liftData.units && liftData.units[psi.liftUnitKey]) {
-    linkedLift = liftData.units[psi.liftUnitKey];
-  }
-  if (linkedLift) {
-    const liftLbl = document.createElement('div');
-    liftLbl.className = 'psi-pending-label';
-    liftLbl.textContent = 'Lift ' + (linkedLift.unitNum || psi.liftUnitKey) +
-      ' Ã‚Â· ' + (linkedLift.status || 'draft');
-    meta.appendChild(liftLbl);
-  }
-
-  const right = document.createElement('div');
-  right.className = 'psi-right';
-  right.style.gap = '6px';
-
-  const apBtn = document.createElement('button');
-  apBtn.className   = 'psi-approve-btn';
-  apBtn.textContent = 'Approve';
-  apBtn.onclick = function(e) { e.stopPropagation(); openApproveModal(psi.id); };
-  right.appendChild(apBtn);
-
-  if (linkedLift) {
-    const liftBtn = document.createElement('button');
-    liftBtn.className = 'psi-draft-btn';
-    liftBtn.textContent = 'Lift';
-    liftBtn.onclick = function(e) {
-      e.stopPropagation();
-      if (typeof showLiftPaneForUnit === 'function') showLiftPaneForUnit(psi.liftUnitKey);
-      else if (typeof showLiftPane === 'function') showLiftPane();
-    };
-    right.appendChild(liftBtn);
-  }
-
-  const delBtn = document.createElement('button');
-  delBtn.className   = 'psi-del';
-  delBtn.textContent = 'Delete';
-  delBtn.onclick = function(e) { e.stopPropagation(); deletePSIConfirm(psi.id, psi.taskDesc); };
-  right.appendChild(delBtn);
-
-  card.appendChild(meta);
-  card.appendChild(right);
-  return card;
-}
 
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ PENDING TAB Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
-function renderPendingTab() {
-  var container = document.getElementById('dashPending');
-  if (!container) return;
-  container.innerHTML = '';
 
-  // Pending PSIs
-  var pendingPSIs = _allPSIs.filter(function(p) {
-    return p.submittedForApproval && !p.approved;
-  });
-
-  // Pending lift units (submitted but not approved)
-  var pendingLifts = [];
-  var liftData = (typeof loadLift === 'function') ? loadLift() : { units: {} };
-  Object.keys(liftData.units || {}).forEach(function(key) {
-    var u = liftData.units[key];
-    var linkedPendingPSI = u && u.psiId && _allPSIs.some(function(p) {
-      return p.id === u.psiId && p.submittedForApproval && !p.approved;
-    });
-    if (u && u.status === 'submitted' && !u.approvedAt && !linkedPendingPSI) {
-      pendingLifts.push(u);
-    }
-  });
-
-  if (pendingPSIs.length === 0 && pendingLifts.length === 0) {
-    container.innerHTML = '<div class="pending-all-clear">All caught up - nothing waiting for approval</div>';
-    return;
-  }
-
-  if (pendingPSIs.length > 0) {
-    var h1 = document.createElement('div');
-    h1.className   = 'pending-section-head';
-    h1.textContent = 'PSIs (' + pendingPSIs.length + ')';
-    container.appendChild(h1);
-    pendingPSIs.forEach(function(p) {
-      container.appendChild(renderPendCard(p, liftData));
-    });
-  }
-
-  if (pendingLifts.length > 0) {
-    var h2 = document.createElement('div');
-    h2.className   = 'pending-section-head';
-    h2.textContent = 'Lift Inspections (' + pendingLifts.length + ')';
-    container.appendChild(h2);
-    pendingLifts.forEach(function(u) {
-      container.appendChild(renderPendLiftCard(u));
-    });
-  }
-}
-
-function renderPendLiftCard(unit) {
-  var card = document.createElement('div');
-  card.className = 'psi-card';
-  card.style.borderLeft = '3px solid var(--accent)';
-  card.style.padding    = '12px 18px';
-
-  var meta = document.createElement('div');
-  meta.className = 'psi-meta';
-
-  var title = document.createElement('div');
-  title.className   = 'psi-title';
-  title.textContent = 'Unit ' + (unit.unitNum || unit.unitKey || '-');
-
-  var sub = document.createElement('div');
-  sub.className   = 'psi-sub';
-  var subParts = [];
-  if (unit.date)     subParts.push(unit.date);
-  if (unit.operator) subParts.push(unit.operator);
-  if (unit.make)     subParts.push(unit.make);
-  sub.textContent = subParts.join(' Ã‚Â· ');
-
-  meta.appendChild(title);
-  meta.appendChild(sub);
-
-  var right = document.createElement('div');
-  right.className    = 'psi-right';
-  right.style.gap    = '6px';
-
-  var apBtn = document.createElement('button');
-  apBtn.className   = 'psi-approve-btn';
-  apBtn.textContent = 'Approve';
-  apBtn.onclick = (function(u) {
-    return function(e) {
-      e.stopPropagation();
-      approveLiftFromDash(u.unitKey || u.unitNum);
-    };
-  })(unit);
-
-  var dlBtn = document.createElement('button');
-  dlBtn.className   = 'psi-del';
-  dlBtn.textContent = 'Ã¢â€ â€œ PDF';
-  dlBtn.onclick = (function(u) {
-    return function(e) {
-      e.stopPropagation();
-      if (typeof buildMEWPPDF === 'function') buildMEWPPDF(u, u.opStrokes || []);
-    };
-  })(unit);
-
-  right.appendChild(apBtn);
-  right.appendChild(dlBtn);
-  card.appendChild(meta);
-  card.appendChild(right);
-  return card;
-}
-
-function approveLiftFromDash(unitKey) {
-  if (!unitKey) return;
-  if (!confirm('Approve lift inspection for unit ' + unitKey + '?')) return;
-
-  var liftData = (typeof loadLift === 'function') ? loadLift() : { units: {} };
-  var u = liftData.units[unitKey];
-  if (!u) { toast('Unit not found'); return; }
-
-  u.approvedBy = me.name;
-  u.approvedAt = Date.now();
-  u.status     = 'approved';
-
-  if (typeof saveLift === 'function') saveLift(liftData);
-  if (typeof archiveLiftInspection === 'function') archiveLiftInspection(u);
-
-  // Generate approved PDF
-  if (typeof buildMEWPPDF === 'function') buildMEWPPDF(u, u.opStrokes || []);
-
-  toast('Lift inspection approved - PDF downloading');
-  updatePendingBadge();
-  renderPendingTab();
-}
-
-function updatePendingBadge() {
-  var badge = document.getElementById('pendingBadge');
-  if (!badge) return;
-
-  var psiCount = _allPSIs.filter(function(p) {
-    return p.submittedForApproval && !p.approved;
-  }).length;
-
-  var liftCount = 0;
-  var liftData = (typeof loadLift === 'function') ? loadLift() : { units: {} };
-  Object.keys(liftData.units || {}).forEach(function(key) {
-    var u = liftData.units[key];
-    if (u && u.status === 'submitted' && !u.approvedAt) liftCount++;
-  });
-
-  var total = psiCount + liftCount;
-  badge.textContent = total > 0 ? total : '';
-}
 
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ TABS Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -572,24 +87,34 @@ function updatePendingBadge() {
 function switchTab(tab) {
 
   _dashTab = tab;
+  if (typeof setSessionActivePane === 'function') setSessionActivePane('dashboard');
+  if (typeof setSessionActiveDashTab === 'function') setSessionActiveDashTab(tab);
 
   var btnActive   = document.getElementById('tabActive');
   var btnHistory  = document.getElementById('tabHistory');
   var btnPending  = document.getElementById('tabPending');
+  var btnStats    = document.getElementById('tabStats');
   var activeList  = document.getElementById('activeList');
   var historyList = document.getElementById('historyList');
   var dashPending = document.getElementById('dashPending');
+  var dashStats   = document.getElementById('dashStats');
+  var searchWrap  = document.getElementById('dashSearchWrap');
 
   if (btnActive)  btnActive.classList.toggle('active',  tab === 'active');
   if (btnHistory) btnHistory.classList.toggle('active', tab === 'history');
   if (btnPending) btnPending.classList.toggle('active', tab === 'pending');
+  if (btnStats)   btnStats.classList.toggle('active',   tab === 'stats');
 
   if (activeList)  activeList.style.display  = tab === 'active'  ? 'block' : 'none';
   if (historyList) historyList.style.display = tab === 'history' ? 'block' : 'none';
   if (dashPending) dashPending.style.display = tab === 'pending' ? 'block' : 'none';
+  if (dashStats)   dashStats.style.display   = tab === 'stats'   ? 'block' : 'none';
+  if (searchWrap)  searchWrap.style.display  = tab === 'stats'   ? 'none' : '';
 
   if (tab === 'pending') {
     renderPendingTab();
+  } else if (tab === 'stats') {
+    renderStatsTab();
   } else {
     renderDash();
   }
@@ -641,7 +166,7 @@ function reopenPSI(id) {
   writePSI(psi);
 
   refreshDash();
-  toast('Ã¢â€ Âº PSI re-opened for editing');
+  toast('PSI re-opened for editing');
 }
 
 
@@ -666,8 +191,8 @@ function openApproveModal(id) {
   const infoEl = document.getElementById('approveInfo');
   if (infoEl) {
     infoEl.textContent = (psi.taskDesc || 'PSI') +
-      (psi.taskLoc ? ' Ã‚Â· ' + psi.taskLoc : '') +
-      (psi.createdBy ? ' Ã¢â‚¬â€ ' + psi.createdBy : '');
+      (psi.taskLoc ? ' - ' + psi.taskLoc : '') +
+      (psi.createdBy ? ' - ' + psi.createdBy : '');
   }
 
   // Pre-fill supervisor name
@@ -741,7 +266,6 @@ function doApprove() {
   psi.worker_fields_open = workerFieldsOpen;
 
   writePSI(psi);
-  saveLearnedTemplate(psi);
   sheetsSavePSI(psi);
 
   // Learn hazard selections for this job type
@@ -755,12 +279,17 @@ function doApprove() {
   }
 
   closeApproveModal();
-  refreshDash();
+  if (typeof refreshAfterPSIWorkflowAction === 'function') refreshAfterPSIWorkflowAction();
+  else refreshDash();
 
-  // Generate PDF Ã¢â‚¬â€ fetches all signers' strokes from Firestore first
-  buildPDFWithSigs(psi, { isFinal: true, supStrokes: strokes, supPng: png });
-  toast('Ã¢Å“â€¦ PSI approved');
-}
+    // Download the approved PDF immediately from the supervisor's local PSI copy.
+    // This keeps approval feeling instant and avoids mobile/browser download loss
+    // when the cloud signature refresh takes too long after the click.
+    psi.supSigStrokes = strokes.slice();
+    psi.supSigPng = png;
+    buildPDF(psi, { isFinal: true });
+    toast('PSI approved \u2014 tap Download PDF');
+  }
 
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ DUPLICATE PSI Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -790,7 +319,7 @@ function duplicatePSI(id) {
 
   writePSI(newRec);
   refreshDash();
-  toast('Ã¢Å“â€œ PSI duplicated Ã¢â‚¬â€ tap to open');
+  toast('PSI duplicated - tap to open');
 }
 
 
@@ -821,495 +350,26 @@ function matchesQuery(psi, q) {
 
 function renderEmpty(title, sub, showBtn) {
   return '<div class="empty">' +
-    '<div class="empty-icon">PSI</div>' +
+    '<div class="empty-icon">Work</div>' +
     '<div class="empty-title">' + title + '</div>' +
     '<div class="empty-sub">' + sub + '</div>' +
     (showBtn ? '<button class="btn btn-primary" onclick="newPSI()">+ New PSI</button>' : '') +
     '</div>';
 }
 
-// Override pending rendering so standalone lift inspections appear in the same
-// supervisor queue as submitted PSIs.
-function renderPendingTab() {
-  var container = document.getElementById('dashPending');
-  if (!container) return;
-  container.innerHTML = '';
-
-  var pendingPSIs = _allPSIs.filter(function(p) {
-    return p.submittedForApproval && !p.approved;
-  });
-
-  var pendingLifts = [];
-  var liftData = (typeof loadLift === 'function') ? loadLift() : { units: {} };
-  Object.keys(liftData.units || {}).forEach(function(key) {
-    var u = liftData.units[key];
-    var linkedPendingPSI = u && u.psiId && _allPSIs.some(function(p) {
-      return p.id === u.psiId && p.submittedForApproval && !p.approved;
-    });
-    if (u && u.status === 'submitted' && !u.approvedAt && !linkedPendingPSI) {
-      pendingLifts.push(u);
-    }
-  });
-
-  if (pendingPSIs.length === 0 && pendingLifts.length === 0) {
-    container.innerHTML = '<div class="pending-all-clear">All caught up - nothing waiting for review</div>';
-    return;
-  }
-
-  var h1 = document.createElement('div');
-  h1.className = 'pending-section-head';
-  h1.textContent = 'Review Queue (' + (pendingPSIs.length + pendingLifts.length) + ')';
-  container.appendChild(h1);
-
-  pendingPSIs.forEach(function(p) {
-    container.appendChild(renderPendCard(p, liftData));
-  });
-
-  pendingLifts.forEach(function(u) {
-    container.appendChild(renderPendLiftCard(u));
-  });
+function renderDashLoadingSection(title, note) {
+  return '<section class="dash-section dash-section-loading">' +
+    '<div class="dash-section-head">' +
+      '<div class="dash-section-title">' + title + '</div>' +
+      '<div class="dash-section-note">' + note + '</div>' +
+    '</div>' +
+    '<div class="dash-loading-cards">' +
+      '<div class="dash-loading-card"></div>' +
+      '<div class="dash-loading-card"></div>' +
+    '</div>' +
+  '</section>';
 }
 
-function renderPendLiftCard(unit) {
-  var card = document.createElement('div');
-  card.className = 'psi-card';
-  card.style.borderLeft = '3px solid var(--accent)';
-  card.style.padding = '12px 18px';
-
-  card.onclick = (function(u) {
-    return function(e) {
-      if (e.target.classList.contains('psi-approve-btn') ||
-          e.target.classList.contains('psi-del') ||
-          e.target.classList.contains('psi-draft-btn')) return;
-      if (typeof showLiftPaneForUnit === 'function') showLiftPaneForUnit(u.unitKey || u.unitNum);
-      else if (typeof showLiftPane === 'function') showLiftPane();
-    };
-  })(unit);
-
-  var meta = document.createElement('div');
-  meta.className = 'psi-meta';
-
-  var title = document.createElement('div');
-  title.className = 'psi-title';
-  title.textContent = 'Lift Inspection - ' + (unit.unitNum || unit.unitKey || '--');
-
-  var sub = document.createElement('div');
-  sub.className = 'psi-sub';
-  var subParts = [];
-  if (unit.date) subParts.push(unit.date);
-  if (unit.operator) subParts.push(unit.operator);
-  if (unit.make) subParts.push(unit.make);
-  sub.textContent = subParts.join(' - ');
-
-  meta.appendChild(title);
-  meta.appendChild(sub);
-
-  var right = document.createElement('div');
-  right.className = 'psi-right';
-  right.style.gap = '6px';
-
-  var apBtn = document.createElement('button');
-  apBtn.className = 'psi-approve-btn';
-  apBtn.textContent = 'Approve';
-  apBtn.onclick = (function(u) {
-    return function(e) {
-      e.stopPropagation();
-      approveLiftFromDash(u.unitKey || u.unitNum);
-    };
-  })(unit);
-
-  var dlBtn = document.createElement('button');
-  dlBtn.className = 'psi-draft-btn';
-  dlBtn.textContent = 'Preview PDF';
-  dlBtn.onclick = (function(u) {
-    return function(e) {
-      e.stopPropagation();
-      if (typeof buildMEWPPDF === 'function') buildMEWPPDF(u, u.opStrokes || [], u.supStrokes || [], { preview: true });
-    };
-  })(unit);
-  if (typeof attachPDFHoverPreview === 'function') {
-    attachPDFHoverPreview(dlBtn, function(onReady) {
-      if (typeof buildMEWPPDF === 'function') buildMEWPPDF(unit, unit.opStrokes || [], unit.supStrokes || [], { onReady: onReady });
-    });
-  }
-
-  right.appendChild(apBtn);
-  right.appendChild(dlBtn);
-  card.appendChild(meta);
-  card.appendChild(right);
-  return card;
-}
-
-// Override review cards so supervisors can approve or send back directly from the queue.
-function renderPendCard(psi, liftData) {
-  const card = document.createElement('div');
-  card.className = 'psi-card';
-  card.style.borderLeft = '3px solid var(--accent)';
-  card.style.padding = '12px 18px';
-
-  card.onclick = function(e) {
-    if (e.target.classList.contains('psi-approve-btn') ||
-        e.target.classList.contains('psi-del') ||
-        e.target.classList.contains('psi-draft-btn')) return;
-    openPSI(psi.id);
-  };
-
-  const meta = document.createElement('div');
-  meta.className = 'psi-meta';
-  liftData = liftData || (typeof loadLift === 'function' ? loadLift() : { units: {} });
-
-  const title = document.createElement('div');
-  title.className = 'psi-title';
-  title.textContent = psi.taskDesc || 'Untitled PSI';
-
-  const sub = document.createElement('div');
-  sub.className = 'psi-sub';
-  sub.textContent = (psi.createdBy || '') + (psi.taskLoc ? ' - ' + psi.taskLoc : '');
-
-  meta.appendChild(title);
-  meta.appendChild(sub);
-
-  var linkedLift = null;
-  if (psi.liftUnitKey && liftData && liftData.units && liftData.units[psi.liftUnitKey]) {
-    linkedLift = liftData.units[psi.liftUnitKey];
-  }
-  if (linkedLift) {
-    const liftLbl = document.createElement('div');
-    liftLbl.className = 'psi-pending-label';
-    liftLbl.textContent = 'Lift ' + (linkedLift.unitNum || psi.liftUnitKey) + ' - ' + (linkedLift.status || 'draft');
-    meta.appendChild(liftLbl);
-
-    if (linkedLift.reviewNote) {
-      const note = document.createElement('div');
-      note.className = 'psi-pending-label';
-      note.textContent = 'Review note: ' + linkedLift.reviewNote;
-      meta.appendChild(note);
-    }
-  }
-
-  const right = document.createElement('div');
-  right.className = 'psi-right';
-  right.style.gap = '6px';
-
-  const apBtn = document.createElement('button');
-  apBtn.className = 'psi-approve-btn';
-  apBtn.textContent = 'Approve';
-  apBtn.onclick = function(e) { e.stopPropagation(); openApproveModal(psi.id); };
-  right.appendChild(apBtn);
-
-  if (linkedLift) {
-    const liftBtn = document.createElement('button');
-    liftBtn.className = 'psi-draft-btn';
-    liftBtn.textContent = linkedLift.status === 'returned' ? 'Open Return' : 'Open Lift';
-    liftBtn.onclick = function(e) {
-      e.stopPropagation();
-      if (typeof showLiftPaneForUnit === 'function') showLiftPaneForUnit(psi.liftUnitKey);
-      else if (typeof showLiftPane === 'function') showLiftPane();
-    };
-    right.appendChild(liftBtn);
-  }
-
-  card.appendChild(meta);
-  card.appendChild(right);
-  return card;
-}
-
-function renderPendLiftCard(unit) {
-  var card = document.createElement('div');
-  card.className = 'psi-card';
-  card.style.borderLeft = '3px solid var(--accent)';
-  card.style.padding = '12px 18px';
-
-  card.onclick = (function(u) {
-    return function(e) {
-      if (e.target.classList.contains('psi-approve-btn') ||
-          e.target.classList.contains('psi-del') ||
-          e.target.classList.contains('psi-draft-btn')) return;
-      if (typeof showLiftPaneForUnit === 'function') showLiftPaneForUnit(u.unitKey || u.unitNum);
-      else if (typeof showLiftPane === 'function') showLiftPane();
-    };
-  })(unit);
-
-  var meta = document.createElement('div');
-  meta.className = 'psi-meta';
-
-  var title = document.createElement('div');
-  title.className = 'psi-title';
-  title.textContent = 'Lift Inspection - ' + (unit.unitNum || unit.unitKey || '--');
-
-  var sub = document.createElement('div');
-  sub.className = 'psi-sub';
-  var subParts = [];
-  if (unit.date) subParts.push(unit.date);
-  if (unit.operator) subParts.push(unit.operator);
-  if (unit.make) subParts.push(unit.make);
-  sub.textContent = subParts.join(' - ');
-
-  meta.appendChild(title);
-  meta.appendChild(sub);
-
-  if (unit.reviewNote) {
-    var note = document.createElement('div');
-    note.className = 'psi-pending-label';
-    note.textContent = 'Review note: ' + unit.reviewNote;
-    meta.appendChild(note);
-  }
-
-  var right = document.createElement('div');
-  right.className = 'psi-right';
-  right.style.gap = '6px';
-
-  var apBtn = document.createElement('button');
-  apBtn.className = 'psi-approve-btn';
-  apBtn.textContent = 'Approve';
-  apBtn.onclick = (function(u) {
-    return function(e) {
-      e.stopPropagation();
-      approveLiftFromDash(u.unitKey || u.unitNum);
-    };
-  })(unit);
-
-  var backBtn = document.createElement('button');
-  backBtn.className = 'psi-draft-btn';
-  backBtn.textContent = 'Send Back';
-  backBtn.onclick = (function(u) {
-    return function(e) {
-      e.stopPropagation();
-      returnLiftFromDash(u.unitKey || u.unitNum);
-    };
-  })(unit);
-
-  var previewBtn = document.createElement('button');
-  previewBtn.className = 'psi-draft-btn';
-  previewBtn.textContent = 'Preview PDF';
-  previewBtn.onclick = (function(u) {
-    return function(e) {
-      e.stopPropagation();
-      if (typeof buildMEWPPDF === 'function') buildMEWPPDF(u, u.opStrokes || [], u.supStrokes || [], { preview: true });
-    };
-  })(unit);
-  if (typeof attachPDFHoverPreview === 'function') {
-    attachPDFHoverPreview(previewBtn, function(onReady) {
-      if (typeof buildMEWPPDF === 'function') buildMEWPPDF(unit, unit.opStrokes || [], unit.supStrokes || [], { onReady: onReady });
-    });
-  }
-
-  var openBtn = document.createElement('button');
-  openBtn.className = 'psi-draft-btn';
-  openBtn.textContent = 'Open';
-  openBtn.onclick = (function(u) {
-    return function(e) {
-      e.stopPropagation();
-      if (typeof showLiftPaneForUnit === 'function') showLiftPaneForUnit(u.unitKey || u.unitNum);
-      else if (typeof showLiftPane === 'function') showLiftPane();
-    };
-  })(unit);
-
-  right.appendChild(apBtn);
-  right.appendChild(backBtn);
-  right.appendChild(previewBtn);
-  right.appendChild(openBtn);
-  card.appendChild(meta);
-  card.appendChild(right);
-  return card;
-}
-
-function returnLiftFromDash(unitKey) {
-  if (!unitKey) return;
-  var liftData = (typeof loadLift === 'function') ? loadLift() : { units: {} };
-  var u = liftData.units[unitKey];
-  if (!u) { toast('Unit not found'); return; }
-
-  var note = prompt('What should be fixed before approval?', u.reviewNote || '');
-  if (note === null) return;
-  note = (note || '').trim();
-  if (!note) { toast('Add a review note first'); return; }
-
-  u.status = 'returned';
-  u.reviewNote = note;
-  u.reviewedBy = me.name || '';
-  u.reviewedAt = Date.now();
-
-  if (typeof saveLift === 'function') saveLift(liftData);
-  if (typeof syncLinkedLiftPSI === 'function') syncLinkedLiftPSI(unitKey);
-
-  updatePendingBadge();
-  renderPendingTab();
-  toast('Sent back to worker for changes');
-}
-
-// Override PSI review cards with send-back support.
-function renderPendCard(psi, liftData) {
-  const card = document.createElement('div');
-  card.className = 'psi-card';
-  card.style.borderLeft = '3px solid var(--accent)';
-  card.style.padding = '12px 18px';
-
-  card.onclick = function(e) {
-    if (e.target.classList.contains('psi-approve-btn') ||
-        e.target.classList.contains('psi-del') ||
-        e.target.classList.contains('psi-draft-btn')) return;
-    openPSI(psi.id);
-  };
-
-  const meta = document.createElement('div');
-  meta.className = 'psi-meta';
-
-  const title = document.createElement('div');
-  title.className = 'psi-title';
-  title.textContent = psi.taskDesc || 'Untitled PSI';
-
-  const sub = document.createElement('div');
-  sub.className = 'psi-sub';
-  sub.textContent = (psi.createdBy || '') + (psi.taskLoc ? ' - ' + psi.taskLoc : '');
-
-  meta.appendChild(title);
-  meta.appendChild(sub);
-
-  if (linkedLift) {
-    const liftRow = document.createElement('div');
-    liftRow.className = 'psi-sub';
-    liftRow.textContent = 'Lift: ' + (linkedLift.unitNum || psi.liftUnitKey) + ' - ' + (linkedLift.status || psi.liftInspectionStatus || 'linked');
-    meta.appendChild(liftRow);
-
-    if (linkedLift.reviewNote) {
-      const liftNote = document.createElement('div');
-      liftNote.className = 'psi-pending-label';
-      liftNote.textContent = 'Lift note: ' + linkedLift.reviewNote;
-      meta.appendChild(liftNote);
-    }
-  }
-
-  if (psi.reviewNote) {
-    const note = document.createElement('div');
-    note.className = 'psi-pending-label';
-    note.textContent = 'Review note: ' + psi.reviewNote;
-    meta.appendChild(note);
-  }
-
-  var linkedLift = null;
-  if (psi.liftUnitKey && liftData && liftData.units && liftData.units[psi.liftUnitKey]) {
-    linkedLift = liftData.units[psi.liftUnitKey];
-  }
-  if (linkedLift) {
-    const liftLbl = document.createElement('div');
-    liftLbl.className = 'psi-pending-label';
-    liftLbl.textContent = 'Lift ' + (linkedLift.unitNum || psi.liftUnitKey) + ' - ' + (linkedLift.status || 'draft');
-    meta.appendChild(liftLbl);
-  }
-
-  const right = document.createElement('div');
-  right.className = 'psi-right';
-  right.style.gap = '6px';
-
-  const apBtn = document.createElement('button');
-  apBtn.className = 'psi-approve-btn';
-  apBtn.textContent = 'Approve';
-  apBtn.onclick = function(e) { e.stopPropagation(); openApproveModal(psi.id); };
-  right.appendChild(apBtn);
-
-  const backBtn = document.createElement('button');
-  backBtn.className = 'psi-draft-btn';
-  backBtn.textContent = 'Send Back';
-  backBtn.onclick = function(e) { e.stopPropagation(); returnPSIFromDash(psi.id); };
-  right.appendChild(backBtn);
-
-  const previewBtn = document.createElement('button');
-  previewBtn.className = 'psi-draft-btn';
-  previewBtn.textContent = 'Preview PDF';
-  previewBtn.onclick = function(e) {
-    e.stopPropagation();
-    redownload(psi.id);
-  };
-  if (typeof attachPDFHoverPreview === 'function') {
-    attachPDFHoverPreview(previewBtn, function(onReady) {
-      buildPDFWithSigs(loadPSI(psi.id), { isFinal: true, onReady: onReady });
-    });
-  }
-  right.appendChild(previewBtn);
-
-  if (linkedLift) {
-    const liftBtn = document.createElement('button');
-    liftBtn.className = 'psi-draft-btn';
-    liftBtn.textContent = linkedLift.status === 'returned' ? 'Open Return' : 'Open Lift';
-    liftBtn.onclick = function(e) {
-      e.stopPropagation();
-      if (typeof showLiftPaneForUnit === 'function') showLiftPaneForUnit(psi.liftUnitKey);
-      else if (typeof showLiftPane === 'function') showLiftPane();
-    };
-    right.appendChild(liftBtn);
-  }
-
-  card.appendChild(meta);
-  card.appendChild(right);
-  return card;
-}
-
-function returnPSIFromDash(psiId) {
-  if (!psiId) return;
-  var psi = typeof loadPSI === 'function' ? loadPSI(psiId) : null;
-  if (!psi) { toast('PSI not found'); return; }
-
-  var note = prompt('What should be fixed before approval?', psi.reviewNote || '');
-  if (note === null) return;
-  note = (note || '').trim();
-  if (!note) { toast('Add a review note first'); return; }
-
-  psi.submittedForApproval = false;
-  psi.reviewStatus = 'returned';
-  psi.reviewNote = note;
-  psi.reviewedBy = me.name || '';
-  psi.reviewedAt = Date.now();
-
-  if (typeof writePSI === 'function') writePSI(psi);
-  refreshDash();
-  updatePendingBadge();
-  renderPendingTab();
-  toast('PSI sent back for changes');
-}
-
-let _returnedPromptKey = null;
-
-function maybePromptReturnedItems() {
-  if (!me || !me.name || userHasFullAccess()) return;
-
-  var myReturnedPSIs = _allPSIs.filter(function(p) {
-    return p && p.reviewStatus === 'returned' && !p.approved && (
-      (p.createdBy || '').trim().toLowerCase() === (me.name || '').trim().toLowerCase() ||
-      (p.workers || []).some(function(w) {
-        return w && w.name && w.name.trim().toLowerCase() === (me.name || '').trim().toLowerCase();
-      })
-    );
-  });
-
-  var liftData = (typeof loadLift === 'function') ? loadLift() : { units: {} };
-  var myReturnedLifts = Object.keys(liftData.units || {}).map(function(key) {
-    var u = liftData.units[key];
-    if (!u) return null;
-    u.unitKey = u.unitKey || key;
-    return u;
-  }).filter(function(u) {
-    return u && u.status === 'returned' && (
-      (u.operator || '').trim().toLowerCase() === (me.name || '').trim().toLowerCase()
-    );
-  });
-
-  var key = [myReturnedPSIs.map(function(p) { return p.id; }).join(','), myReturnedLifts.map(function(u) { return u.unitKey || u.unitNum; }).join(',')].join('|');
-  if (!key || key === '|' || key === _returnedPromptKey) return;
-  _returnedPromptKey = key;
-
-  var total = myReturnedPSIs.length + myReturnedLifts.length;
-  var msg = 'You have ' + total + ' item' + (total !== 1 ? 's' : '') + ' returned for changes.';
-  if (myReturnedPSIs.length && confirm(msg + ' Open the first returned PSI now?')) {
-    openPSI(myReturnedPSIs[0].id);
-    return;
-  }
-  if (myReturnedLifts.length && confirm(msg + ' Open the first returned lift now?')) {
-    if (typeof showLiftPaneForUnit === 'function') showLiftPaneForUnit(myReturnedLifts[0].unitKey || myReturnedLifts[0].unitNum);
-  } else {
-    toast(msg);
-  }
-}
 
 function getPSIStatusMeta(psi, isHist) {
   if (isHist || psi.approved) return { label: 'Approved', card: 'status-approved', pill: 'ready' };
@@ -1318,9 +378,20 @@ function getPSIStatusMeta(psi, isHist) {
   return { label: 'Active', card: '', pill: '' };
 }
 
-function renderDashSummaryCard(label, value, note) {
+function renderDashSummaryCard(label, value, note, onClick) {
   var card = document.createElement('div');
   card.className = 'dash-summary-card';
+  if (typeof onClick === 'function') {
+    card.classList.add('is-clickable');
+    card.tabIndex = 0;
+    card.onclick = onClick;
+    card.onkeydown = function(e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        onClick();
+      }
+    };
+  }
   card.innerHTML =
     '<div class="dash-summary-label">' + label + '</div>' +
     '<div class="dash-summary-value">' + value + '</div>' +
@@ -1332,14 +403,13 @@ function renderDashboardHeader() {
   var eyebrow = document.getElementById('dashEyebrow');
   var title = document.getElementById('dashTitle');
   var subtitle = document.getElementById('dashSubtitle');
-  var identityLabel = document.getElementById('dashIdentityLabel');
-  var welcome = document.getElementById('dashWelcome');
   var signedInStrip = document.getElementById('signedInStrip');
   var signedInName = document.getElementById('signedInName');
   var summary = document.getElementById('dashSummary');
   if (!summary) return;
 
-  var active = _allPSIs.filter(function(p) { return !p.submittedForApproval && p.reviewStatus !== 'returned'; }).length;
+  var activeField = _allPSIs.filter(function(p) { return !p.submittedForApproval && p.reviewStatus !== 'returned'; }).length;
+  var openPSIs = _allPSIs.length;
   var returned = _allPSIs.filter(function(p) { return p.reviewStatus === 'returned'; }).length;
   var review = _allPSIs.filter(function(p) { return p.submittedForApproval && !p.approved; }).length;
   var openLifts = 0;
@@ -1347,55 +417,71 @@ function renderDashboardHeader() {
     var liftData = loadLift();
     openLifts = Object.keys((liftData && liftData.units) || {}).filter(function(key) {
       var u = liftData.units[key];
-      return u && u.status !== 'approved';
+      return u && u.status !== 'approved' && u.isPublished !== false;
     }).length;
   }
 
   if (me && userHasFullAccess()) {
     if (eyebrow) eyebrow.textContent = 'Supervisor View';
-    if (title) title.textContent = 'Review and Field Work';
-    if (subtitle) subtitle.textContent = 'Review queue first, then monitor open jobs and attached lift inspections.';
+    if (title) title.textContent = '';
+    if (subtitle) subtitle.textContent = '';
   } else {
-    if (eyebrow) eyebrow.textContent = 'Worker View';
-    if (title) title.textContent = "Today's Open Work";
-    if (subtitle) subtitle.textContent = 'Start new paperwork fast, track what is in review, and fix returned items first.';
+    if (eyebrow) eyebrow.textContent = 'Field Work';
+    if (title) title.textContent = '';
+    if (subtitle) subtitle.textContent = '';
   }
-  if (welcome) {
-    var trade = String((me && me.trade) || '').trim();
-    var tradeLabel = trade ? (trade.charAt(0).toUpperCase() + trade.slice(1)) : '';
-    if (identityLabel) identityLabel.textContent = me && me.role === 'admin' ? 'Admin' : (me && me.role === 'supervisor' ? 'Supervisor' : 'Technician');
-    welcome.textContent = me && me.name
-      ? (me.name + (tradeLabel ? ' - ' + tradeLabel : ''))
-      : '';
-    if (signedInStrip) signedInStrip.style.display = me && me.name ? '' : 'none';
-    if (signedInName) signedInName.textContent = me && me.name
-      ? (((me.role === 'admin' ? 'Admin' : (me.role === 'supervisor' ? 'Supervisor' : 'Technician'))) + ' - ' + me.name + (tradeLabel ? ' - ' + tradeLabel : ''))
-      : '';
-  }
+  var trade = String((me && me.trade) || '').trim();
+  var tradeLabel = trade ? (trade.charAt(0).toUpperCase() + trade.slice(1)) : '';
+  if (signedInStrip) signedInStrip.style.display = me && me.name ? '' : 'none';
+  if (signedInName) signedInName.textContent = me && me.name
+    ? (((me.role === 'admin' ? 'Admin' : (me.role === 'supervisor' ? 'Supervisor' : 'Technician'))) + ' - ' + me.name + (tradeLabel ? ' - ' + tradeLabel : ''))
+    : '';
 
   summary.innerHTML = '';
+  var loadingPSIs = isDashInitialPSILoadPending();
+  var reviewValue = loadingPSIs ? '...' : review;
+  var returnedValue = loadingPSIs ? '...' : returned;
+  var openPSIValue = loadingPSIs ? '...' : openPSIs;
   if (me && userHasFullAccess()) {
-    summary.appendChild(renderDashSummaryCard('Review Queue', review, review ? 'Items waiting for supervisor action' : 'Nothing waiting right now'));
-    summary.appendChild(renderDashSummaryCard('Returned', returned, returned ? 'Work sent back for fixes' : 'No returned paperwork'));
-    summary.appendChild(renderDashSummaryCard('Open PSIs', _allPSIs.length, active ? 'Field work still in progress' : 'No active PSI work'));
-    summary.appendChild(renderDashSummaryCard('Open Lifts', openLifts, openLifts ? 'Lift inspections still editable' : 'No open lift forms'));
+    summary.appendChild(renderDashSummaryCard('Review Queue', reviewValue, loadingPSIs ? 'Loading live PSI data...' : (review ? 'Items waiting for review' : 'Nothing waiting right now'), function() {
+      openSummaryReviewQueue();
+    }));
+    summary.appendChild(renderDashSummaryCard('Returned', returnedValue, loadingPSIs ? 'Checking returned paperwork...' : (returned ? 'Work sent back for fixes' : 'No returned paperwork'), function() {
+      openSummaryReturned();
+    }));
+    summary.appendChild(renderDashSummaryCard('Open PSIs', openPSIValue, loadingPSIs ? 'Loading live open work...' : (openPSIs ? ('Includes ' + activeField + ' field work item' + (activeField === 1 ? '' : 's')) : 'No open PSI work'), function() {
+      openSummaryOpenWork();
+    }));
+    summary.appendChild(renderDashSummaryCard('Open Lifts', openLifts, openLifts ? 'Lift inspections still editable' : 'No open lift forms', function() {
+      openSummaryOpenLifts();
+    }));
   } else {
-    summary.appendChild(renderDashSummaryCard('Returned to You', returned, returned ? 'Fix these before starting fresh work' : 'Nothing has been sent back'));
-    summary.appendChild(renderDashSummaryCard('In Review', review, review ? 'Paperwork waiting on supervisor' : 'Nothing waiting on review'));
-    summary.appendChild(renderDashSummaryCard('Open PSIs', active, active ? 'Draft or active jobs still open' : 'No open PSI work'));
-    summary.appendChild(renderDashSummaryCard('Open Lifts', openLifts, openLifts ? 'Lift forms still in progress' : 'No open lift forms'));
+    summary.appendChild(renderDashSummaryCard('Review Queue', reviewValue, loadingPSIs ? 'Loading live PSI data...' : (review ? 'Paperwork waiting on review' : 'Nothing waiting right now'), function() {
+      openSummaryReviewQueue();
+    }));
+    summary.appendChild(renderDashSummaryCard('Returned', returnedValue, loadingPSIs ? 'Checking returned paperwork...' : (returned ? 'Fix these before starting fresh work' : 'No returned paperwork'), function() {
+      openSummaryReturned();
+    }));
+    summary.appendChild(renderDashSummaryCard('Open PSIs', openPSIValue, loadingPSIs ? 'Loading live open work...' : (openPSIs ? ('Includes ' + activeField + ' field work item' + (activeField === 1 ? '' : 's')) : 'No open PSI work'), function() {
+      openSummaryOpenWork();
+    }));
+    summary.appendChild(renderDashSummaryCard('Open Lifts', openLifts, openLifts ? 'Lift forms still in progress' : 'No open lift forms', function() {
+      openSummaryOpenLifts();
+    }));
   }
 }
 
 function renderDashSection(title, note, items, renderItem) {
   var section = document.createElement('section');
   section.className = 'dash-section';
+  var safeTitle = (typeof cleanDisplayValue === 'function') ? cleanDisplayValue(title) : String(title == null ? '' : title).trim();
+  var safeNote = (typeof cleanDisplayValue === 'function') ? cleanDisplayValue(note) : String(note == null ? '' : note).trim();
 
   var head = document.createElement('div');
   head.className = 'dash-section-head';
   head.innerHTML =
-    '<div class="dash-section-title">' + title + '</div>' +
-    '<div class="dash-section-note">' + note + '</div>';
+    '<div class="dash-section-title">' + safeTitle + '</div>' +
+    '<div class="dash-section-note">' + safeNote + '</div>';
   section.appendChild(head);
 
   items.forEach(function(item) {
@@ -1404,8 +490,762 @@ function renderDashSection(title, note, items, renderItem) {
   return section;
 }
 
+function getPSIDashSortAt(psi) {
+  if (!psi) return 0;
+  var dateText = String(psi.jobDate || '').trim();
+  var timeText = String(psi.jobTime || '').trim();
+  if (dateText && /^\d{4}-\d{2}-\d{2}$/.test(dateText)) {
+    var stamp = Date.parse(dateText + 'T' + (timeText || '00:00') + ':00');
+    if (!isNaN(stamp)) return stamp;
+  }
+  return Number(psi.updatedAt || psi.createdAt || 0);
+}
+
+function psiIncludesCurrentUserForDash(psi) {
+  if (!psi || !me || !me.name) return false;
+  var myName = normalizePersonName(me.name);
+  if (!myName) return false;
+  if (normalizePersonName(psi.createdBy) === myName) return true;
+  if (typeof isReturnAssignedToMe === 'function' && isReturnAssignedToMe(psi)) return true;
+  return (psi.workers || []).some(function(worker) {
+    var workerName = String((worker && worker.name) || '').trim();
+    if (!workerName) return false;
+    if (normalizePersonName(workerName) === myName) return true;
+    return typeof psiWorkerNameMatches === 'function'
+      ? psiWorkerNameMatches(psi, workerName, me.name)
+      : false;
+  });
+}
+
+function sortPSIsForDash(items, timeSelector) {
+  return (items || []).slice().sort(function(a, b) {
+    var aMine = psiIncludesCurrentUserForDash(a) ? 1 : 0;
+    var bMine = psiIncludesCurrentUserForDash(b) ? 1 : 0;
+    if (aMine !== bMine) return bMine - aMine;
+    return (timeSelector ? timeSelector(b) : 0) - (timeSelector ? timeSelector(a) : 0);
+  });
+}
+
+function getStatsMonthLabel(month) {
+  var idx = Number(month || 0) - 1;
+  if (idx < 0 || idx > 11) return 'All Months';
+  return ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][idx];
+}
+
+function getStatsLongMonthLabel(month) {
+  var idx = Number(month || 0) - 1;
+  if (idx < 0 || idx > 11) return 'All Months';
+  return ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][idx];
+}
+
+function getStatsMonthYearLabel(month, year) {
+  var y = String(year || '').trim();
+  if (!month || month === 'all') return y || 'All Time';
+  return getStatsLongMonthLabel(month) + (y ? (' ' + y) : '');
+}
+
+function parseStatsDateParts(source) {
+  if (!source) return null;
+  if (typeof source === 'string' && /^\d{4}-\d{2}-\d{2}/.test(source)) {
+    return {
+      year: source.slice(0, 4),
+      month: String(Number(source.slice(5, 7))),
+      date: source
+    };
+  }
+  var stamp = Number(source || 0);
+  if (!stamp) return null;
+  var d = new Date(stamp);
+  if (isNaN(d.getTime())) return null;
+  return {
+    year: String(d.getFullYear()),
+    month: String(d.getMonth() + 1),
+    date: d.toISOString().slice(0, 10)
+  };
+}
+
+function getStatsPSIStatus(psi) {
+  if (!psi) return 'active';
+  if (psi.approved) return 'approved';
+  if (psi.unpublished) return 'draft';
+  if (psi.reviewStatus === 'returned') return 'returned';
+  if (psi.submittedForApproval || psi.reviewStatus === 'submitted') return 'review';
+  return 'active';
+}
+
+function getStatsLiftStatus(unit) {
+  var raw = String((unit && unit.status) || 'draft').toLowerCase();
+  if (raw === 'submitted') return 'review';
+  if (raw === 'approved') return 'approved';
+  if (raw === 'returned') return 'returned';
+  if (raw === 'draft') return 'draft';
+  return raw || 'draft';
+}
+
+function getStatsPSIWorkerName(psi) {
+  if (!psi) return '';
+  var by = String(psi.createdBy || '').trim();
+  if (by) return by;
+  var firstWorker = ((psi.workers || []).find(function(w) {
+    return w && String(w.name || '').trim();
+  }) || {}).name;
+  return String(firstWorker || '').trim();
+}
+
+function getStatsCrewMembers(psi) {
+  return (psi && psi.workers || []).map(function(w) {
+    return String((w && w.name) || '').trim();
+  }).filter(Boolean);
+}
+
+function getStatsPSIJobType(psi) {
+  return String(
+    (psi && (
+      psi.jobCode ||
+      psi.templateName ||
+      psi.jobTitle ||
+      psi.shortTitle ||
+      psi.taskDesc
+    )) || 'General'
+  ).replace(/\s+/g, ' ').trim();
+}
+
+function getStatsLiftType(psi) {
+  if (!psi || !psi.liftUnitKey) return '';
+  var liveLift = (typeof loadLift === 'function') ? loadLift() : { units: {} };
+  var liveUnit = liveLift && liveLift.units ? liveLift.units[psi.liftUnitKey] : null;
+  var fleet = (typeof loadFleet === 'function') ? loadFleet() : {};
+  var fleetUnit = fleet && psi.liftUnitKey ? fleet[psi.liftUnitKey] : null;
+  return String(
+    (liveUnit && (liveUnit.powerType || liveUnit.make)) ||
+    (fleetUnit && (fleetUnit.powerType || fleetUnit.make)) ||
+    ''
+  ).trim();
+}
+
+function normalizePSIStatsRecord(psi) {
+  if (!psi || psi.deleted || !canCurrentUserSeePSI(psi)) return null;
+  var createdParts = parseStatsDateParts(psi.jobDate || psi.createdAt || psi.updatedAt || Date.now()) || {};
+  var submittedAt = Number(psi.submittedAt || psi.createdAt || psi.updatedAt || 0);
+  return {
+    id: psi.id,
+    recordType: 'psi',
+    raw: psi,
+    psiId: psi.id,
+    dateCreated: createdParts.date || '',
+    month: createdParts.month || '',
+    year: createdParts.year || '',
+    workerName: getStatsPSIWorkerName(psi),
+    crewMembers: getStatsCrewMembers(psi),
+    jobType: getStatsPSIJobType(psi),
+    status: getStatsPSIStatus(psi),
+    approved: !!psi.approved,
+    liftInspection: !!(psi.liftRequired || psi.liftUnitKey),
+    liftType: getStatsLiftType(psi),
+    assetLocation: String(psi.taskLoc || '').trim(),
+    timeSubmitted: submittedAt || 0,
+    createdAt: Number(psi.createdAt || 0),
+    completedAt: Number(psi.approvedAt || 0)
+  };
+}
+
+function normalizeLiftStatsRecord(unit, unitKey, fromHistory) {
+  if (!unit || unit.deleted) return null;
+  if (!fromHistory && unit.isPublished === false) return null;
+  var parts = parseStatsDateParts(unit.date || unit.approvedAt || unit.updatedAt || unit.createdAt || Date.now()) || {};
+  return {
+    id: (unitKey || unit.unitKey || unit.unitNum || 'lift') + '|' + (unit.date || parts.date || ''),
+    recordType: 'lift',
+    raw: unit,
+    unitKey: unitKey || unit.unitKey || '',
+    dateCreated: parts.date || '',
+    month: parts.month || '',
+    year: parts.year || '',
+    workerName: String(unit.operator || '').trim(),
+    crewMembers: [],
+    jobType: 'Lift Inspection',
+    status: getStatsLiftStatus(unit),
+    approved: !!unit.approvedAt || String(unit.status || '').toLowerCase() === 'approved',
+    liftInspection: true,
+    liftType: String(unit.powerType || unit.make || '').trim(),
+    assetLocation: String(unit.assetLocation || unit.location || unit.unitNum || '').trim(),
+    timeSubmitted: Number(unit.reviewedAt || unit.updatedAt || unit.createdAt || 0),
+    createdAt: Number(unit.createdAt || unit.updatedAt || 0),
+    completedAt: Number(unit.approvedAt || 0)
+  };
+}
+
+function getStatsPSIRecords() {
+  if (typeof loadIndex !== 'function' || typeof loadPSI !== 'function') return [];
+  return loadIndex().map(function(id) {
+    return normalizePSIStatsRecord(loadPSI(id));
+  }).filter(Boolean);
+}
+
+function getStatsLiftRecords() {
+  var records = [];
+  var seen = {};
+  var history = (typeof loadLiftHistory === 'function') ? loadLiftHistory() : [];
+  history.forEach(function(record) {
+    if (!record || record.deleted) return;
+    var key = (record.unitKey || record.unitNum || '') + '|' + (record.date || '');
+    if (seen[key]) return;
+    seen[key] = true;
+    var normalized = normalizeLiftStatsRecord(record, record.unitKey || '', true);
+    if (normalized) records.push(normalized);
+  });
+  var liveLift = (typeof loadLift === 'function') ? loadLift() : { units: {} };
+  Object.keys((liveLift && liveLift.units) || {}).forEach(function(key) {
+    var unit = liveLift.units[key];
+    if (!unit || unit.deleted || unit.isPublished === false) return;
+    var dedupeKey = key + '|' + (unit.date || '');
+    if (seen[dedupeKey]) return;
+    seen[dedupeKey] = true;
+    var normalized = normalizeLiftStatsRecord(unit, key, false);
+    if (normalized) records.push(normalized);
+  });
+  return records;
+}
+
+function getStatsAvailableYears(psiRecords, liftRecords) {
+  var years = {};
+  psiRecords.concat(liftRecords).forEach(function(record) {
+    if (record && record.year) years[record.year] = true;
+  });
+  years[String(new Date().getFullYear())] = true;
+  return Object.keys(years).sort(function(a, b) { return Number(b) - Number(a); });
+}
+
+function matchesStatsFilters(record, filters) {
+  if (!record) return false;
+  if (filters.year && filters.year !== 'all' && String(record.year || '') !== String(filters.year)) return false;
+  if (filters.month && filters.month !== 'all' && String(record.month || '') !== String(filters.month)) return false;
+  if (filters.worker && filters.worker !== 'all' && String(record.workerName || '').toLowerCase() !== String(filters.worker || '').toLowerCase()) return false;
+  if (filters.jobType && filters.jobType !== 'all' && String(record.jobType || '') !== String(filters.jobType || '')) return false;
+  if (filters.status && filters.status !== 'all' && String(record.status || '') !== String(filters.status || '')) return false;
+  return true;
+}
+
+function getStatsWorkerCounts(records) {
+  var totals = {};
+  records.forEach(function(record) {
+    var name = String(record.workerName || '').trim() || 'Unassigned';
+    totals[name] = (totals[name] || 0) + 1;
+  });
+  return Object.keys(totals).map(function(name) {
+    return { label: name, value: totals[name] };
+  }).sort(function(a, b) {
+    if (b.value !== a.value) return b.value - a.value;
+    return a.label.localeCompare(b.label);
+  });
+}
+
+function getStatsJobTypeCounts(records) {
+  var totals = {};
+  records.forEach(function(record) {
+    var label = String(record.jobType || 'General').trim() || 'General';
+    totals[label] = (totals[label] || 0) + 1;
+  });
+  return Object.keys(totals).map(function(label) {
+    return { label: label, value: totals[label] };
+  }).sort(function(a, b) {
+    if (b.value !== a.value) return b.value - a.value;
+    return a.label.localeCompare(b.label);
+  });
+}
+
+function getStatsMonthlyCounts(records, year) {
+  var y = String(year || new Date().getFullYear());
+  var totals = [];
+  for (var i = 1; i <= 12; i += 1) totals.push({ month: String(i), label: getStatsMonthLabel(i), value: 0 });
+  records.forEach(function(record) {
+    if (String(record.year || '') !== y) return;
+    var idx = Number(record.month || 0) - 1;
+    if (idx < 0 || idx > 11) return;
+    totals[idx].value += 1;
+  });
+  return totals;
+}
+
+function formatStatsStatus(status) {
+  var value = String(status || '').trim().toLowerCase();
+  if (!value) return '--';
+  if (value === 'review') return 'In Review';
+  if (value === 'returned') return 'Returned';
+  if (value === 'approved') return 'Approved';
+  if (value === 'draft') return 'Draft';
+  if (value === 'active') return 'Active';
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function collectStatsViewData() {
+  var psiRecords = getStatsPSIRecords();
+  var liftRecords = getStatsLiftRecords();
+  var filters = Object.assign({}, _statsFilters);
+  var trendYear = (filters.year && filters.year !== 'all') ? filters.year : String(new Date().getFullYear());
+  var filteredPSIs = psiRecords.filter(function(record) { return matchesStatsFilters(record, filters); });
+  var filteredLifts = liftRecords.filter(function(record) { return matchesStatsFilters(record, filters); });
+  var selectedMonthLabel = getStatsMonthYearLabel(filters.month, filters.year);
+  var monthlyPSIs = getStatsMonthlyCounts(psiRecords.filter(function(record) {
+    return (!filters.worker || filters.worker === 'all' || String(record.workerName || '').toLowerCase() === String(filters.worker).toLowerCase()) &&
+      (!filters.jobType || filters.jobType === 'all' || String(record.jobType || '') === String(filters.jobType || '')) &&
+      (!filters.status || filters.status === 'all' || String(record.status || '') === String(filters.status || ''));
+  }), trendYear);
+  var monthlyLifts = getStatsMonthlyCounts(liftRecords.filter(function(record) {
+    return (!filters.worker || filters.worker === 'all' || String(record.workerName || '').toLowerCase() === String(filters.worker).toLowerCase()) &&
+      (!filters.status || filters.status === 'all' || String(record.status || '') === String(filters.status || ''));
+  }), trendYear);
+
+  return {
+    filters: filters,
+    trendYear: trendYear,
+    psiRecords: psiRecords,
+    liftRecords: liftRecords,
+    filteredPSIs: filteredPSIs,
+    filteredLifts: filteredLifts,
+    availableYears: getStatsAvailableYears(psiRecords, liftRecords),
+    workers: Array.from(new Set(
+      psiRecords.map(function(record) { return String(record.workerName || '').trim(); })
+        .concat(liftRecords.map(function(record) { return String(record.workerName || '').trim(); }))
+        .filter(Boolean)
+    )).sort(),
+    jobTypes: Array.from(new Set(psiRecords.map(function(record) { return String(record.jobType || '').trim(); }).filter(Boolean))).sort(),
+    selectedMonthLabel: selectedMonthLabel,
+    psiWorkerCounts: getStatsWorkerCounts(filteredPSIs),
+    liftWorkerCounts: getStatsWorkerCounts(filteredLifts),
+    jobTypeCounts: getStatsJobTypeCounts(filteredPSIs),
+    monthlyPSIs: monthlyPSIs,
+    monthlyLifts: monthlyLifts,
+    recentPSIs: filteredPSIs.slice().sort(function(a, b) {
+      return (b.timeSubmitted || b.createdAt || 0) - (a.timeSubmitted || a.createdAt || 0);
+    }).slice(0, 12)
+  };
+}
+
+function createStatsFilterField(labelText, control) {
+  var field = document.createElement('label');
+  field.className = 'stats-filter';
+  var label = document.createElement('span');
+  label.className = 'stats-filter-label';
+  label.textContent = labelText;
+  field.appendChild(label);
+  field.appendChild(control);
+  return field;
+}
+
+function buildStatsSelect(value, options, onChange) {
+  var select = document.createElement('select');
+  select.className = 'stats-select';
+  options.forEach(function(option) {
+    var opt = document.createElement('option');
+    opt.value = option.value;
+    opt.textContent = option.label;
+    if (String(option.value) === String(value)) opt.selected = true;
+    select.appendChild(opt);
+  });
+  select.onchange = function() { onChange(select.value); };
+  return select;
+}
+
+function setStatsFilter(key, value) {
+  _statsFilters[key] = value;
+  if (key === 'year' && _statsFilters.month === '' ) _statsFilters.month = String(new Date().getMonth() + 1);
+  renderStatsTab();
+}
+
+function renderStatsKPI(label, value, note, tone) {
+  var card = document.createElement('div');
+  card.className = 'stats-kpi' + (tone ? (' ' + tone) : '');
+
+  var over = document.createElement('div');
+  over.className = 'stats-kpi-label';
+  over.textContent = label;
+
+  var val = document.createElement('div');
+  val.className = 'stats-kpi-value';
+  val.textContent = value;
+
+  var sub = document.createElement('div');
+  sub.className = 'stats-kpi-note';
+  sub.textContent = note;
+
+  card.appendChild(over);
+  card.appendChild(val);
+  card.appendChild(sub);
+  return card;
+}
+
+function openSummaryOpenWork() {
+  switchTab('active');
+}
+
+function openSummaryReviewQueue() {
+  if (userHasFullAccess()) switchTab('pending');
+  else switchTab('active');
+}
+
+function openSummaryReturned() {
+  switchTab('active');
+}
+
+function openSummaryOpenLifts() {
+  if (typeof showLiftPane === 'function') showLiftPane();
+  if (typeof showLiftTab === 'function') showLiftTab('history');
+}
+
+function isApprovedRecordArchived(record, days) {
+  var maxAgeDays = Number(days || 7);
+  var approvedAt = Number(record && record.approvedAt || 0);
+  if (!approvedAt) return false;
+  return (Date.now() - approvedAt) >= (maxAgeDays * 24 * 60 * 60 * 1000);
+}
+
+function renderStatsBarChart(title, subtitle, rows, opts) {
+  opts = opts || {};
+  var card = document.createElement('section');
+  card.className = 'stats-panel';
+
+  var head = document.createElement('div');
+  head.className = 'stats-panel-head';
+  head.innerHTML = '<div class="stats-panel-title">' + title + '</div><div class="stats-panel-note">' + subtitle + '</div>';
+  card.appendChild(head);
+
+  var body = document.createElement('div');
+  body.className = 'stats-bars';
+
+  if (!rows.length) {
+    var empty = document.createElement('div');
+    empty.className = 'stats-empty';
+    empty.textContent = 'No matching records for this filter set yet.';
+    body.appendChild(empty);
+    card.appendChild(body);
+    return card;
+  }
+
+  var max = Math.max.apply(null, rows.map(function(row) { return row.value; }).concat([1]));
+  rows.slice(0, opts.limit || rows.length).forEach(function(row) {
+    var item = document.createElement(opts.onClick ? 'button' : 'div');
+    item.className = 'stats-bar-row' + (opts.activeValue && String(opts.activeValue) === String(row.label) ? ' active' : '');
+    if (opts.onClick) {
+      item.type = 'button';
+      item.onclick = function() { opts.onClick(row.label); };
+    }
+
+    var top = document.createElement('div');
+    top.className = 'stats-bar-top';
+    top.innerHTML = '<span class="stats-bar-label">' + row.label + '</span><span class="stats-bar-value">' + row.value + '</span>';
+
+    var track = document.createElement('div');
+    track.className = 'stats-bar-track';
+    var fill = document.createElement('div');
+    fill.className = 'stats-bar-fill';
+    fill.style.width = Math.max(8, (row.value / max) * 100) + '%';
+    track.appendChild(fill);
+
+    item.appendChild(top);
+    item.appendChild(track);
+    body.appendChild(item);
+  });
+
+  card.appendChild(body);
+  return card;
+}
+
+function renderStatsLineChart(title, subtitle, points, activeMonth, onPointClick) {
+  var card = document.createElement('section');
+  card.className = 'stats-panel';
+
+  var head = document.createElement('div');
+  head.className = 'stats-panel-head';
+  head.innerHTML = '<div class="stats-panel-title">' + title + '</div><div class="stats-panel-note">' + subtitle + '</div>';
+  card.appendChild(head);
+
+  if (!points.length) {
+    var empty = document.createElement('div');
+    empty.className = 'stats-empty';
+    empty.textContent = 'No trend data yet.';
+    card.appendChild(empty);
+    return card;
+  }
+
+  var chart = document.createElement('div');
+  chart.className = 'stats-line-chart';
+  var svgNS = 'http://www.w3.org/2000/svg';
+  var svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('viewBox', '0 0 420 220');
+  svg.setAttribute('class', 'stats-line-svg');
+
+  var max = Math.max.apply(null, points.map(function(point) { return point.value; }).concat([1]));
+  var plotPoints = points.map(function(point, idx) {
+    var x = 28 + (idx * (364 / Math.max(1, points.length - 1)));
+    var y = 178 - ((point.value / max) * 132);
+    return { x: x, y: y, label: point.label, month: point.month, value: point.value };
+  });
+
+  [0, 0.5, 1].forEach(function(step) {
+    var line = document.createElementNS(svgNS, 'line');
+    var y = 178 - (132 * step);
+    line.setAttribute('x1', '28');
+    line.setAttribute('x2', '392');
+    line.setAttribute('y1', String(y));
+    line.setAttribute('y2', String(y));
+    line.setAttribute('class', 'stats-grid-line');
+    svg.appendChild(line);
+  });
+
+  var polyline = document.createElementNS(svgNS, 'polyline');
+  polyline.setAttribute('fill', 'none');
+  polyline.setAttribute('class', 'stats-line-path');
+  polyline.setAttribute('points', plotPoints.map(function(point) {
+    return point.x + ',' + point.y;
+  }).join(' '));
+  svg.appendChild(polyline);
+
+  plotPoints.forEach(function(point) {
+    var circle = document.createElementNS(svgNS, 'circle');
+    circle.setAttribute('cx', String(point.x));
+    circle.setAttribute('cy', String(point.y));
+    circle.setAttribute('r', activeMonth && String(activeMonth) === String(point.month) ? '6' : '5');
+    circle.setAttribute('class', 'stats-line-point' + (activeMonth && String(activeMonth) === String(point.month) ? ' active' : ''));
+    circle.style.cursor = 'pointer';
+    circle.addEventListener('click', function() {
+      if (typeof onPointClick === 'function') onPointClick(point.month);
+    });
+    svg.appendChild(circle);
+
+    var lbl = document.createElementNS(svgNS, 'text');
+    lbl.setAttribute('x', String(point.x));
+    lbl.setAttribute('y', '204');
+    lbl.setAttribute('text-anchor', 'middle');
+    lbl.setAttribute('class', 'stats-axis-label' + (activeMonth && String(activeMonth) === String(point.month) ? ' active' : ''));
+    lbl.textContent = point.label;
+    lbl.style.cursor = 'pointer';
+    lbl.addEventListener('click', function() {
+      if (typeof onPointClick === 'function') onPointClick(point.month);
+    });
+    svg.appendChild(lbl);
+  });
+
+  chart.appendChild(svg);
+  card.appendChild(chart);
+  return card;
+}
+
+function renderStatsRecentTable(rows) {
+  var card = document.createElement('section');
+  card.className = 'stats-panel stats-panel-wide';
+
+  var head = document.createElement('div');
+  head.className = 'stats-panel-head';
+  head.innerHTML = '<div class="stats-panel-title">Recent PSI Submissions</div><div class="stats-panel-note">Filtered records update when you click a chart or adjust the controls.</div>';
+  card.appendChild(head);
+
+  if (!rows.length) {
+    var empty = document.createElement('div');
+    empty.className = 'stats-empty';
+    empty.textContent = 'No PSI records match the current filters.';
+    card.appendChild(empty);
+    return card;
+  }
+
+  var wrap = document.createElement('div');
+  wrap.className = 'stats-table-wrap';
+  var table = document.createElement('table');
+  table.className = 'stats-table';
+  table.innerHTML =
+    '<thead><tr>' +
+      '<th>PSI ID</th>' +
+      '<th>Date Created</th>' +
+      '<th>Month</th>' +
+      '<th>Year</th>' +
+      '<th>Worker</th>' +
+      '<th>Crew Members</th>' +
+      '<th>Job Type</th>' +
+      '<th>Status</th>' +
+      '<th>Approved</th>' +
+      '<th>Lift</th>' +
+      '<th>Lift Type</th>' +
+      '<th>Asset / Location</th>' +
+      '<th>Time Submitted</th>' +
+    '</tr></thead>';
+
+  var tbody = document.createElement('tbody');
+  rows.forEach(function(row) {
+    var tr = document.createElement('tr');
+    [
+      row.psiId || row.id || '--',
+      row.dateCreated || '--',
+      row.month ? getStatsMonthLabel(row.month) : '--',
+      row.year || '--',
+      row.workerName || '--',
+      row.crewMembers && row.crewMembers.length ? row.crewMembers.join(', ') : '--',
+      row.jobType || '--',
+      formatStatsStatus(row.status),
+      row.approved ? 'Yes' : 'No',
+      row.liftInspection ? 'Yes' : 'No',
+      row.liftType || '--',
+      row.assetLocation || '--',
+      row.timeSubmitted ? fmtDate(row.timeSubmitted) : '--'
+    ].forEach(function(text) {
+      var td = document.createElement('td');
+      td.textContent = text;
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  card.appendChild(wrap);
+  return card;
+}
+
+function renderStatsTab() {
+  renderDashboardHeader();
+  var mount = document.getElementById('dashStats');
+  if (!mount) return;
+  mount.innerHTML = '';
+
+  var data = collectStatsViewData();
+  var filtersCard = document.createElement('section');
+  filtersCard.className = 'stats-panel stats-panel-wide';
+
+  var filtersHead = document.createElement('div');
+  filtersHead.className = 'stats-panel-head';
+  filtersHead.innerHTML = '<div class="stats-panel-title">Stats Dashboard</div><div class="stats-panel-note">Track PSI and lift activity by month, worker, job type, and status. Click chart points or bars to filter the records below.</div>';
+  filtersCard.appendChild(filtersHead);
+
+  var filtersGrid = document.createElement('div');
+  filtersGrid.className = 'stats-filters';
+  filtersGrid.appendChild(createStatsFilterField('Month', buildStatsSelect(data.filters.month, [{ value: 'all', label: 'All Months' }].concat(
+    Array.from({ length: 12 }).map(function(_, idx) {
+      return { value: String(idx + 1), label: getStatsLongMonthLabel(idx + 1) };
+    })
+  ), function(value) {
+    setStatsFilter('month', value);
+  })));
+  filtersGrid.appendChild(createStatsFilterField('Year', buildStatsSelect(data.filters.year, [{ value: 'all', label: 'All Years' }].concat(
+    data.availableYears.map(function(year) { return { value: year, label: year }; })
+  ), function(value) {
+    setStatsFilter('year', value);
+  })));
+  filtersGrid.appendChild(createStatsFilterField('Worker', buildStatsSelect(data.filters.worker, [{ value: 'all', label: 'All Workers' }].concat(
+    data.workers.map(function(name) { return { value: name, label: name }; })
+  ), function(value) {
+    setStatsFilter('worker', value);
+  })));
+  filtersGrid.appendChild(createStatsFilterField('Job Type', buildStatsSelect(data.filters.jobType, [{ value: 'all', label: 'All Job Types' }].concat(
+    data.jobTypes.map(function(type) { return { value: type, label: type }; })
+  ), function(value) {
+    setStatsFilter('jobType', value);
+  })));
+  filtersGrid.appendChild(createStatsFilterField('Status', buildStatsSelect(data.filters.status, [
+    { value: 'all', label: 'All Statuses' },
+    { value: 'active', label: 'Active' },
+    { value: 'review', label: 'In Review' },
+    { value: 'returned', label: 'Returned' },
+    { value: 'approved', label: 'Approved' },
+    { value: 'draft', label: 'Draft' }
+  ], function(value) {
+    setStatsFilter('status', value);
+  })));
+  filtersCard.appendChild(filtersGrid);
+
+  var resetRow = document.createElement('div');
+  resetRow.className = 'stats-filter-actions';
+  var resetBtn = document.createElement('button');
+  resetBtn.className = 'btn btn-secondary btn-sm';
+  resetBtn.textContent = 'Reset Filters';
+  resetBtn.onclick = function() {
+    _statsFilters = {
+      month: String(new Date().getMonth() + 1),
+      year: String(new Date().getFullYear()),
+      worker: 'all',
+      jobType: 'all',
+      status: 'all'
+    };
+    renderStatsTab();
+  };
+  resetRow.appendChild(resetBtn);
+  filtersCard.appendChild(resetRow);
+  mount.appendChild(filtersCard);
+
+  var kpis = document.createElement('div');
+  kpis.className = 'stats-kpis';
+  var completedThisMonth = data.filteredPSIs.filter(function(record) { return record.approved; }).length;
+  var liftsCompletedThisMonth = data.filteredLifts.filter(function(record) { return record.approved; }).length;
+  var approvedTotal = data.filteredPSIs.filter(function(record) { return record.approved; }).length;
+  var pendingTotal = data.filteredPSIs.filter(function(record) { return !record.approved; }).length;
+  kpis.appendChild(renderStatsKPI('PSIs Completed', completedThisMonth, 'Completed in ' + data.selectedMonthLabel, 'tone-psi'));
+  kpis.appendChild(renderStatsKPI('Lift Inspections Completed', liftsCompletedThisMonth, 'Completed in ' + data.selectedMonthLabel, 'tone-lift'));
+  kpis.appendChild(renderStatsKPI('Approved PSIs', approvedTotal, 'Visible approved PSI records in this filter', 'tone-approved'));
+  kpis.appendChild(renderStatsKPI('Pending / Draft PSIs', pendingTotal, 'Open, review, returned, or draft PSI records', 'tone-open'));
+  mount.appendChild(kpis);
+
+  var chartGrid = document.createElement('div');
+  chartGrid.className = 'stats-chart-grid';
+  chartGrid.appendChild(renderStatsBarChart(
+    'PSI Count by Worker',
+    'Selected month and filters',
+    data.psiWorkerCounts,
+    {
+      activeValue: data.filters.worker !== 'all' ? data.filters.worker : '',
+      onClick: function(worker) {
+        setStatsFilter('worker', String(data.filters.worker) === String(worker) ? 'all' : worker);
+      },
+      limit: 8
+    }
+  ));
+  chartGrid.appendChild(renderStatsBarChart(
+    'Lift Inspection Count by Worker',
+    'Selected month and filters',
+    data.liftWorkerCounts,
+    {
+      activeValue: data.filters.worker !== 'all' ? data.filters.worker : '',
+      onClick: function(worker) {
+        setStatsFilter('worker', String(data.filters.worker) === String(worker) ? 'all' : worker);
+      },
+      limit: 8
+    }
+  ));
+  chartGrid.appendChild(renderStatsLineChart(
+    'Monthly PSI Totals',
+    'Approved and visible PSI volume for ' + data.trendYear,
+    data.monthlyPSIs,
+    data.filters.month !== 'all' ? data.filters.month : '',
+    function(month) {
+      setStatsFilter('month', String(data.filters.month) === String(month) ? 'all' : month);
+    }
+  ));
+  chartGrid.appendChild(renderStatsLineChart(
+    'Monthly Lift Totals',
+    'Lift inspection volume for ' + data.trendYear,
+    data.monthlyLifts,
+    data.filters.month !== 'all' ? data.filters.month : '',
+    function(month) {
+      setStatsFilter('month', String(data.filters.month) === String(month) ? 'all' : month);
+    }
+  ));
+  chartGrid.appendChild(renderStatsBarChart(
+    'Job Type Breakdown',
+    'Filtered PSI records by job type',
+    data.jobTypeCounts,
+    {
+      activeValue: data.filters.jobType !== 'all' ? data.filters.jobType : '',
+      onClick: function(jobType) {
+        setStatsFilter('jobType', String(data.filters.jobType) === String(jobType) ? 'all' : jobType);
+      },
+      limit: 10
+    }
+  ));
+  mount.appendChild(chartGrid);
+
+  mount.appendChild(renderStatsRecentTable(data.recentPSIs));
+}
+
 function renderDash() {
   renderDashboardHeader();
+  var dashStats = document.getElementById('dashStats');
+  if (dashStats) dashStats.style.display = 'none';
 
   const query = (document.getElementById('dashSearch') || {}).value || '';
   const q = query.toLowerCase().trim();
@@ -1415,16 +1255,24 @@ function renderDash() {
       var aReturned = a && a.reviewStatus === 'returned' ? 1 : 0;
       var bReturned = b && b.reviewStatus === 'returned' ? 1 : 0;
       if (aReturned !== bReturned) return bReturned - aReturned;
-      return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
+      var aMine = psiIncludesCurrentUserForDash(a) ? 1 : 0;
+      var bMine = psiIncludesCurrentUserForDash(b) ? 1 : 0;
+      if (aMine !== bMine) return bMine - aMine;
+      return getPSIDashSortAt(b) - getPSIDashSortAt(a);
     });
     if (q) items = items.filter(function(p) { return matchesQuery(p, q); });
+    var loadingPSIs = isDashInitialPSILoadPending();
 
     if (!items.length) {
-      activeList.innerHTML = renderEmpty(
-        q ? 'No results for "' + query + '"' : 'No open paperwork',
-        q ? 'Try a different search term.' : 'Start a new PSI or lift inspection when work begins.',
-        !q
-      );
+      if (loadingPSIs && !q) {
+        activeList.innerHTML = renderDashLoadingSection('Open Work', '');
+      } else {
+        activeList.innerHTML = renderEmpty(
+          q ? 'No results for "' + query + '"' : 'No open paperwork',
+          q ? 'Try a different search term.' : 'Start a new PSI or lift inspection when work begins.',
+          !q
+        );
+      }
     } else {
       activeList.innerHTML = '';
       var returned = items.filter(function(p) { return p.reviewStatus === 'returned'; });
@@ -1436,13 +1284,13 @@ function renderDash() {
           return renderPSICard(p, false);
         }));
       }
-      if (review.length) {
-        activeList.appendChild(renderDashSection('With Supervisor', 'Already sent for review', review, function(p) {
+      if (active.length) {
+        activeList.appendChild(renderDashSection('Open Field Work', userHasFullAccess() ? 'Editable paperwork still in progress' : 'Jobs you can keep building right now', active, function(p) {
           return renderPSICard(p, false);
         }));
       }
-      if (active.length) {
-        activeList.appendChild(renderDashSection(userHasFullAccess() ? 'Open Field Work' : 'Active Drafts', userHasFullAccess() ? 'Editable paperwork still in progress' : 'Jobs you can keep building right now', active, function(p) {
+      if (review.length) {
+        activeList.appendChild(renderDashSection('With Supervisor', 'Already sent for review', review, function(p) {
           return renderPSICard(p, false);
         }));
       }
@@ -1456,7 +1304,7 @@ function renderDash() {
     } else {
       historyList.style.display = 'block';
       let items = _histPSIs.slice().sort(function(a, b) {
-        return (b.approvedAt || b.updatedAt || 0) - (a.approvedAt || a.updatedAt || 0);
+        return Number(b.approvedAt || getPSIDashSortAt(b) || 0) - Number(a.approvedAt || getPSIDashSortAt(a) || 0);
       });
       if (q) items = items.filter(function(p) { return matchesQuery(p, q); });
       if (!items.length) {
@@ -1467,228 +1315,23 @@ function renderDash() {
         );
       } else {
         historyList.innerHTML = '';
-        historyList.appendChild(renderDashSection('Approved Work', 'Finished paperwork archive', items, function(p) {
-          return renderPSICard(p, true);
-        }));
+        var recentApproved = items.filter(function(p) { return !isApprovedRecordArchived(p, 7); });
+        var archivedApproved = items.filter(function(p) { return isApprovedRecordArchived(p, 7); });
+
+        if (recentApproved.length) {
+          historyList.appendChild(renderDashSection('Approved Work', 'Approved in the last 7 days', recentApproved, function(p) {
+            return renderPSICard(p, true);
+          }));
+        }
+
+        if (archivedApproved.length) {
+          historyList.appendChild(renderDashSection('Archive', 'Approved more than 7 days ago', archivedApproved, function(p) {
+            return renderPSICard(p, true);
+          }));
+        }
       }
     }
   }
-}
-
-function renderPSICard(psi, isHist) {
-  const status = getPSIStatusMeta(psi, isHist);
-  const card = document.createElement('div');
-  card.className = 'psi-card ' + (status.card || '');
-  card.onclick = function(e) {
-    if (e.target.classList.contains('psi-del') ||
-        e.target.classList.contains('psi-approve-btn') ||
-        e.target.classList.contains('psi-dup-btn') ||
-        e.target.classList.contains('psi-initial-btn') ||
-        e.target.classList.contains('psi-draft-btn')) return;
-    openPSI(psi.id);
-  };
-
-  const badge = document.createElement('div');
-  if (isHist) {
-    badge.className = 'psi-badge green';
-    badge.textContent = psi.jobCode || 'DONE';
-  } else if (psi.submittedForApproval) {
-    badge.className = 'psi-badge yellow';
-    badge.textContent = psi.jobCode || 'PSI';
-  } else {
-    badge.className = 'psi-badge';
-    badge.textContent = psi.jobCode || 'PSI';
-  }
-
-  const meta = document.createElement('div');
-  meta.className = 'psi-meta';
-
-  const statusRow = document.createElement('div');
-  statusRow.className = 'psi-status-row';
-  const statusPill = document.createElement('div');
-  statusPill.className = 'psi-status-pill ' + (status.pill || '');
-  statusPill.textContent = status.label;
-  statusRow.appendChild(statusPill);
-  if (psi.liftRequired || psi.liftUnitKey) {
-    const liftPill = document.createElement('div');
-    liftPill.className = 'psi-status-pill lift';
-    liftPill.textContent = psi.liftInspectionDeficiencies && psi.liftInspectionDeficiencies.length
-      ? 'Lift Deficiency'
-      : (psi.liftInspectionStatus ? 'Lift ' + psi.liftInspectionStatus : 'Lift Linked');
-    statusRow.appendChild(liftPill);
-  }
-  meta.appendChild(statusRow);
-
-  const title = document.createElement('div');
-  title.className = 'psi-title';
-  title.textContent = getShortPSILabel(psi);
-  meta.appendChild(title);
-
-  const parts = [];
-  if (psi.jobNumber) parts.push('WO ' + psi.jobNumber);
-  if (psi.taskLoc) parts.push(psi.taskLoc);
-  if (psi.createdBy) parts.push('Owner: ' + psi.createdBy);
-  if (psi.jobDate) parts.push(fmtDisplayDate(psi.jobDate));
-  const sub = document.createElement('div');
-  sub.className = 'psi-sub';
-  sub.textContent = parts.join(' - ');
-  meta.appendChild(sub);
-
-  if (psi.workers && psi.workers.length) {
-    const crew = document.createElement('div');
-    crew.className = 'psi-sub';
-    crew.textContent = 'Crew: ' + psi.workers.map(function(w) { return w && w.name ? w.name : ''; }).filter(Boolean).join(', ');
-    meta.appendChild(crew);
-  }
-
-  const liftData = typeof loadLift === 'function' ? loadLift() : { units: {} };
-  const linkedLift = (psi.liftUnitKey && liftData && liftData.units && liftData.units[psi.liftUnitKey])
-    ? liftData.units[psi.liftUnitKey]
-    : null;
-
-  if (linkedLift) {
-    const liftRow = document.createElement('div');
-    liftRow.className = 'psi-sub';
-    liftRow.textContent = 'Lift: ' + (linkedLift.unitNum || psi.liftUnitKey) + ' - ' + (linkedLift.status || psi.liftInspectionStatus || 'linked');
-    meta.appendChild(liftRow);
-  }
-
-  if (psi.reviewNote) {
-    const note = document.createElement('div');
-    note.className = 'psi-pending-label';
-    note.textContent = 'Review note: ' + psi.reviewNote;
-    meta.appendChild(note);
-  }
-
-  const right = document.createElement('div');
-  right.className = 'psi-right';
-
-  const workerCount = (psi.workers || []).filter(function(w) { return w.name; }).length;
-  const sigCount = Object.keys(psi.sigs || {}).length || (psi.sigWorkers ? psi.sigWorkers.length : 0);
-  const count = document.createElement('div');
-  count.className = 'psi-count';
-  count.textContent = sigCount + '/' + workerCount + ' signed';
-  right.appendChild(count);
-
-  const actions = document.createElement('div');
-  actions.className = 'psi-card-actions';
-
-  const isSup = userHasFullAccess();
-  const isApproved = !!psi.approved || !!isHist;
-  const workerFieldsOpen = psi.worker_fields_open !== false;
-  const isOwner = psi.createdBy === me.name;
-
-  if (isApproved) {
-    const dl = document.createElement('button');
-    dl.className = 'psi-draft-btn';
-    dl.textContent = 'Preview PDF';
-    dl.onclick = function(e) { e.stopPropagation(); redownload(psi.id); };
-    if (typeof attachPDFHoverPreview === 'function') {
-      attachPDFHoverPreview(dl, function(onReady) {
-        buildPDFWithSigs(loadPSI(psi.id), { isFinal: true, onReady: onReady });
-      });
-    }
-    actions.appendChild(dl);
-
-    if (linkedLift) {
-      const liftPreviewBtn = document.createElement('button');
-      liftPreviewBtn.className = 'psi-draft-btn';
-      liftPreviewBtn.textContent = 'Preview Lift PDF';
-      liftPreviewBtn.onclick = function(e) {
-        e.stopPropagation();
-        if (typeof buildMEWPPDF === 'function') buildMEWPPDF(linkedLift, linkedLift.opStrokes || [], linkedLift.supStrokes || [], { preview: true });
-      };
-      if (typeof attachPDFHoverPreview === 'function') {
-        attachPDFHoverPreview(liftPreviewBtn, function(onReady) {
-          if (typeof buildMEWPPDF === 'function') buildMEWPPDF(linkedLift, linkedLift.opStrokes || [], linkedLift.supStrokes || [], { onReady: onReady });
-        });
-      }
-      actions.appendChild(liftPreviewBtn);
-
-      const openLiftBtn = document.createElement('button');
-      openLiftBtn.className = 'psi-draft-btn';
-      openLiftBtn.textContent = 'Open Lift';
-      openLiftBtn.onclick = function(e) {
-        e.stopPropagation();
-        if (typeof showLiftPaneForUnit === 'function') showLiftPaneForUnit(psi.liftUnitKey);
-        else if (typeof showLiftPane === 'function') showLiftPane();
-      };
-      actions.appendChild(openLiftBtn);
-    }
-
-    if (!isSup && workerFieldsOpen) {
-      const signBtn = document.createElement('button');
-      signBtn.className = 'psi-initial-btn';
-      signBtn.textContent = 'Sign';
-      signBtn.onclick = function(e) { e.stopPropagation(); openQuickWorkerSign(psi.id); };
-      actions.appendChild(signBtn);
-    }
-
-    if (isSup) {
-      const reopenBtn = document.createElement('button');
-      reopenBtn.className = 'psi-draft-btn';
-      reopenBtn.textContent = 'Re-open';
-      reopenBtn.onclick = function(e) { e.stopPropagation(); reopenPSI(psi.id); };
-      actions.appendChild(reopenBtn);
-
-      const delBtn = document.createElement('button');
-      delBtn.className = 'psi-del';
-      delBtn.textContent = 'Delete';
-      delBtn.onclick = function(e) { e.stopPropagation(); deletePSIConfirm(psi.id, psi.taskDesc); };
-      actions.appendChild(delBtn);
-    }
-  } else {
-    if (isSup && psi.submittedForApproval) {
-      const apBtn = document.createElement('button');
-      apBtn.className = 'psi-approve-btn';
-      apBtn.textContent = 'Approve';
-      apBtn.onclick = function(e) { e.stopPropagation(); openApproveModal(psi.id); };
-      actions.appendChild(apBtn);
-    }
-
-    const signBtn2 = document.createElement('button');
-    signBtn2.className = 'psi-initial-btn';
-    signBtn2.textContent = 'Sign';
-    signBtn2.onclick = function(e) { e.stopPropagation(); openQuickWorkerSign(psi.id); };
-    actions.appendChild(signBtn2);
-
-    const initBtn = document.createElement('button');
-    initBtn.className = 'psi-initial-btn';
-    initBtn.textContent = 'Initial';
-    initBtn.onclick = function(e) { e.stopPropagation(); openQuickSign(psi.id); };
-    actions.appendChild(initBtn);
-
-      const draftBtn = document.createElement('button');
-      draftBtn.className = 'psi-draft-btn';
-      draftBtn.textContent = 'Preview PDF';
-      draftBtn.onclick = function(e) { e.stopPropagation(); buildPDFWithSigs(loadPSI(psi.id), { isFinal: false, preview: true }); };
-      if (typeof attachPDFHoverPreview === 'function') {
-        attachPDFHoverPreview(draftBtn, function(onReady) {
-          buildPDFWithSigs(loadPSI(psi.id), { isFinal: false, onReady: onReady });
-        });
-      }
-      actions.appendChild(draftBtn);
-
-    if (isSup || isOwner) {
-      const dupBtn = document.createElement('button');
-      dupBtn.className = 'psi-dup-btn';
-      dupBtn.textContent = 'Duplicate';
-      dupBtn.onclick = function(e) { e.stopPropagation(); duplicatePSI(psi.id); };
-      actions.appendChild(dupBtn);
-
-      const delBtn2 = document.createElement('button');
-      delBtn2.className = 'psi-del';
-      delBtn2.textContent = 'Delete';
-      delBtn2.onclick = function(e) { e.stopPropagation(); deletePSIConfirm(psi.id, psi.taskDesc); };
-      actions.appendChild(delBtn2);
-    }
-  }
-
-  right.appendChild(actions);
-  card.appendChild(badge);
-  card.appendChild(meta);
-  card.appendChild(right);
-  return card;
 }
 
 function getShortPSILabel(psi) {
@@ -1719,22 +1362,128 @@ function getShortPSILabel(psi) {
   return words.slice(0, 3).join(' ');
 }
 
+function renderPendingAccountReviewSection(users) {
+  if (!users || !users.length) return null;
+
+  var section = document.createElement('section');
+  section.className = 'dash-section';
+
+  var head = document.createElement('div');
+  head.className = 'dash-section-head';
+
+  var title = document.createElement('h3');
+  title.textContent = 'Pending Account Requests';
+  head.appendChild(title);
+
+  var note = document.createElement('div');
+  note.className = 'dash-section-note';
+  note.textContent = 'Approve new users here too so they do not get missed';
+  head.appendChild(note);
+
+  section.appendChild(head);
+
+  var body = document.createElement('div');
+  body.className = 'dash-section-body';
+
+  users.forEach(function(user) {
+    var row = document.createElement('div');
+    row.className = 'crew-worker';
+
+    var info = document.createElement('div');
+    info.className = 'crew-name';
+    info.innerHTML =
+      '<strong>' + (user.name || 'Unnamed worker') + '</strong><br>' +
+      '<span style="font-size:12px;color:var(--text2)">' +
+      (user.email || 'No email') + ' - ' + ((user.trade || 'worker').charAt(0).toUpperCase() + (user.trade || 'worker').slice(1)) +
+      '</span>';
+
+    var controls = document.createElement('div');
+    controls.style.display = 'flex';
+    controls.style.gap = '8px';
+    controls.style.alignItems = 'center';
+
+    var roleSel = document.createElement('select');
+    ['worker', 'supervisor'].forEach(function(role) {
+      var opt = document.createElement('option');
+      opt.value = role;
+      opt.textContent = role.charAt(0).toUpperCase() + role.slice(1);
+      if ((user.role || 'worker') === role) opt.selected = true;
+      roleSel.appendChild(opt);
+    });
+
+    var tradeSel = document.createElement('select');
+    ['electrician', 'millwright', 'plumber', 'carpenter'].forEach(function(trade) {
+      var opt = document.createElement('option');
+      opt.value = trade;
+      opt.textContent = trade.charAt(0).toUpperCase() + trade.slice(1);
+      if ((user.trade || '') === trade) opt.selected = true;
+      tradeSel.appendChild(opt);
+    });
+
+    var approveBtn = document.createElement('button');
+    approveBtn.className = 'btn btn-secondary btn-sm';
+    approveBtn.textContent = 'Approve';
+    approveBtn.onclick = function() {
+      if (typeof firebaseApproveUserAccount !== 'function') {
+        toast('Account approval is not available');
+        return;
+      }
+      approveBtn.disabled = true;
+      firebaseApproveUserAccount(user.uid, tradeSel.value, roleSel.value).then(function() {
+        if (typeof ensurePersonnelName === 'function') ensurePersonnelName(user.name || '');
+        if (typeof renderPersonnelList === 'function') renderPersonnelList();
+        if (typeof renderPendingAccountsList === 'function') renderPendingAccountsList();
+        renderPendingTab();
+        toast((user.name || 'Account') + ' approved as ' + roleSel.value);
+      }).catch(function(err) {
+        approveBtn.disabled = false;
+        toast((err && err.message) || 'Could not approve account');
+      });
+    };
+
+    controls.appendChild(roleSel);
+    controls.appendChild(tradeSel);
+    controls.appendChild(approveBtn);
+    row.appendChild(info);
+    row.appendChild(controls);
+    body.appendChild(row);
+  });
+
+  section.appendChild(body);
+  return section;
+}
+
 function renderPendingTab() {
   renderDashboardHeader();
   var container = document.getElementById('dashPending');
   if (!container) return;
   container.innerHTML = '';
 
+  if (userHasFullAccess() && typeof firebaseListPendingUsers === 'function') {
+    var accountMount = document.createElement('div');
+    accountMount.innerHTML = '<div class="pending-all-clear">Loading pending account requests...</div>';
+    container.appendChild(accountMount);
+    firebaseListPendingUsers().then(function(rows) {
+      if (!container.contains(accountMount)) return;
+      var section = renderPendingAccountReviewSection(rows || []);
+      if (section) accountMount.replaceWith(section);
+      else accountMount.remove();
+    }).catch(function() {
+      if (!container.contains(accountMount)) return;
+      accountMount.remove();
+    });
+  }
+
   var pendingPSIs = _allPSIs.filter(function(p) {
     return p.submittedForApproval && !p.approved;
-  }).sort(function(a, b) {
-    return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
   });
+  pendingPSIs = sortPSIsForDash(pendingPSIs, getPSIDashSortAt);
 
   var pendingLifts = [];
   var liftData = (typeof loadLift === 'function') ? loadLift() : { units: {} };
   Object.keys(liftData.units || {}).forEach(function(key) {
     var u = liftData.units[key];
+    if (u && u.isPublished === false) return;
     var linkedPendingPSI = u && u.psiId && _allPSIs.some(function(p) {
       return p.id === u.psiId && p.submittedForApproval && !p.approved;
     });
@@ -1748,12 +1497,20 @@ function renderPendingTab() {
 
   var reviewItems = [];
   pendingPSIs.forEach(function(psi) {
-    reviewItems.push({ type: 'psi', sortAt: psi.updatedAt || psi.createdAt || 0, record: psi });
+    reviewItems.push({
+      type: 'psi',
+      sortAt: getPSIDashSortAt(psi),
+      mine: psiIncludesCurrentUserForDash(psi) ? 1 : 0,
+      record: psi
+    });
   });
   pendingLifts.forEach(function(unit) {
     reviewItems.push({ type: 'lift', sortAt: unit.updatedAt || unit.reviewedAt || 0, record: unit });
   });
   reviewItems.sort(function(a, b) {
+    var aMine = a && a.mine ? 1 : 0;
+    var bMine = b && b.mine ? 1 : 0;
+    if (aMine !== bMine) return bMine - aMine;
     return (b.sortAt || 0) - (a.sortAt || 0);
   });
 

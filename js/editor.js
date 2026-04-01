@@ -22,6 +22,9 @@ let _matchDebounce  = null;   // debounce for job matching
 let _psiLocked      = false;  // true when worker opens an approved PSI (safety content locked)
 let _liftPromptShownFor = null;
 let _jobCategoryOpen = {};
+let _taskTextRendered = false;
+let _jobWordingRequestToken = 0;
+let _workImportWorkers = [];
 
 function getAISourceLabel(pack) {
   var source = String((pack && pack._aiSource) || '').toLowerCase();
@@ -74,6 +77,101 @@ function updateLiftRequirementUI(psi) {
     if (typeof openLiftLinkModal === 'function') openLiftLinkModal();
   };
   box.appendChild(btn);
+
+  if (linked) {
+    var clearBtn = document.createElement('button');
+    clearBtn.className = 'match-chip';
+    clearBtn.textContent = 'Clear Lift';
+    clearBtn.onclick = function() {
+      if (typeof unlinkLiftFromActivePSI === 'function') unlinkLiftFromActivePSI();
+    };
+    box.appendChild(clearBtn);
+
+    if (typeof loadFleet === 'function') {
+      var fleet = loadFleet() || {};
+      var lift = fleet[linked] || {};
+      var preview = document.createElement('div');
+      preview.style.width = '100%';
+      preview.style.marginTop = '10px';
+      preview.style.padding = '10px';
+      preview.style.border = '1px solid var(--line)';
+      preview.style.borderRadius = '14px';
+      preview.style.background = 'var(--card)';
+      preview.style.display = 'grid';
+      preview.style.gap = '8px';
+
+      var title = document.createElement('div');
+      title.style.fontWeight = '700';
+      title.textContent = lift.unitNum || linked;
+      preview.appendChild(title);
+
+      if (lift.make) {
+        var model = document.createElement('div');
+        model.style.color = 'var(--text2)';
+        model.style.fontSize = '13px';
+        model.textContent = lift.make;
+        preview.appendChild(model);
+      }
+
+      var photoUrl = '';
+      if (typeof getLiftManualPhotoUrl === 'function') photoUrl = getLiftManualPhotoUrl(lift) || '';
+      if (!photoUrl) photoUrl = String(lift.photoThumbDataUrl || lift.photoDataUrl || lift.photoUrl || '').trim();
+      if (photoUrl) {
+        var img = document.createElement('img');
+        img.src = photoUrl;
+        img.alt = (lift.unitNum || linked) + ' photo';
+        img.style.width = '100%';
+        img.style.maxHeight = '180px';
+        img.style.objectFit = 'contain';
+        img.style.background = '#f7f4ef';
+        img.style.borderRadius = '12px';
+        img.style.border = '1px solid var(--line)';
+        preview.appendChild(img);
+      }
+
+      box.appendChild(preview);
+    }
+  }
+}
+
+function unlinkLiftFromActivePSI() {
+  if (!me || !me.activePSI) return;
+  var psi = (typeof loadPSI === 'function') ? loadPSI(me.activePSI) : null;
+  if (!psi || !psi.liftUnitKey) return;
+  if (!confirm('Remove the linked lift inspection from this PSI?')) return;
+
+  var unitKey = psi.liftUnitKey;
+  psi.liftUnitKey = '';
+  psi.liftInspectionStatus = '';
+  psi.liftInspectionDate = '';
+  psi.liftInspectionRemarks = '';
+  psi.liftInspectionReviewNote = '';
+  psi.liftInspectionReviewedBy = '';
+  psi.liftInspectionReviewedAt = null;
+  psi.liftInspectionDeficiencies = [];
+
+  if (typeof writePSINow === 'function') writePSINow(psi);
+  else if (typeof writePSI === 'function') writePSI(psi);
+
+  if (typeof loadLift === 'function' && typeof saveLift === 'function') {
+    var liftData = loadLift();
+    if (liftData && liftData.units && liftData.units[unitKey]) {
+      var unit = liftData.units[unitKey];
+      if ((unit.psiId || '') === psi.id) {
+        unit.psiId = '';
+        unit.baseRemarks = '';
+        if (typeof refreshLiftRemarks === 'function') refreshLiftRemarks(unit);
+        saveLift(liftData);
+      }
+    }
+  }
+
+  if (typeof renderSigStep === 'function' && typeof _curStep !== 'undefined' && _curStep === 5) {
+    renderSigStep();
+  }
+  if (typeof updateLiftRequirementUI === 'function') updateLiftRequirementUI(psi);
+  if (typeof refreshDash === 'function') refreshDash();
+  toast('Lift removed from PSI');
 }
 
 function maybePromptLiftLink(psi) {
@@ -90,10 +188,11 @@ function maybePromptLiftLink(psi) {
 
 // Returns true if the current user can edit safety content on this PSI
 function canEditSafety(psi) {
+  if (!me) return true;
   if (me.role === 'supervisor') return true;
   if (!psi) return true;
-  // Workers can edit safety content only on their own non-approved drafts
-  return !psi.approved && psi.createdBy === me.name;
+  // Workers can edit any non-approved PSI so the crew can join and update work in progress.
+  return !psi.approved;
 }
 
 // Returns true if current user can edit worker name/sig fields
@@ -108,9 +207,11 @@ function canEditWorkerFields(psi) {
 // â”€â”€ NEW PSI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function newPSI() {
+  if (typeof stopActivePSISync === 'function') stopActivePSISync();
   _psiLocked = false;   // new PSIs are never locked
   _liftPromptShownFor = null;
   _jobCategoryOpen = {};
+  _taskTextRendered = false;
 
   // Reset state
   st.hazards       = new Set();
@@ -126,6 +227,7 @@ function newPSI() {
   // Generate ID and set active
   const id = genId();
   me.activePSI = id;
+  if (typeof setSessionActivePSI === 'function') setSessionActivePSI(id);
 
   // Default date/time
   const dateEl = document.getElementById('jobDate');
@@ -135,6 +237,10 @@ function newPSI() {
 
   // Clear job fields
   ['jobDesc','jobLoc','jobNumber','jobMuster'].forEach(function(id) {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  ['taskStepsArea','hazardTextArea','controlTextArea'].forEach(function(id) {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -150,15 +256,46 @@ function newPSI() {
   // Auto-add weather hazards based on current conditions
   autoAddWeatherHazards();
 
-  savePSI({});
+  savePSI({ unpublished: true, publishedAt: null });
 
   showEditor(0);
+}
+
+function isUnpublishedPSI(psi) {
+  return !!(psi && psi.unpublished);
+}
+
+function publishActivePSI() {
+  if (!me.activePSI || typeof loadPSI !== 'function') return null;
+  var psi = loadPSI(me.activePSI);
+  if (!psi) return null;
+  if (!isUnpublishedPSI(psi)) return psi;
+  return savePSI({
+    unpublished: false,
+    publishedAt: psi.publishedAt || Date.now()
+  }, { immediate: true });
 }
 
 function openWorkOrderImportModal() {
   const modal = document.getElementById('workOrderImportModal');
   const textEl = document.getElementById('workOrderImportText');
+  const dateEl = document.getElementById('workOrderImportDate');
+  const timeEl = document.getElementById('workOrderImportTime');
   if (!modal) return;
+  _workImportWorkers = [{
+    name: String((me && me.name) || '').trim(),
+    role: me && me.role === 'supervisor' ? 'Supervisor' : 'Worker'
+  }].filter(function(w) { return w.name; });
+  if (dateEl && !dateEl.value) dateEl.value = todayISO();
+  if (timeEl && !timeEl.value) timeEl.value = nowTime();
+    renderWorkOrderImportWorkers(true);
+    if (typeof ensureApprovedWorkerDirectoryLoaded === 'function') {
+      Promise.resolve(ensureApprovedWorkerDirectoryLoaded()).then(function() {
+        renderWorkOrderImportWorkers();
+      }).catch(function() {
+        renderWorkOrderImportWorkers();
+      });
+    }
   modal.style.display = 'flex';
   modal.classList.add('open');
   renderWorkOrderPreview();
@@ -175,28 +312,182 @@ function closeWorkOrderImportModal() {
   renderWorkOrderPreview('');
 }
 
+function renderWorkOrderImportWorkers(isLoading) {
+    var box = document.getElementById('workOrderImportWorkers');
+    var selectedBox = document.getElementById('workOrderImportSelectedWorkers');
+    if (!box) return;
+    var people = (typeof getWorkerDirectory === 'function') ? getWorkerDirectory() : [];
+    var selected = {};
+    (_workImportWorkers || []).forEach(function(worker) {
+      var key = String((worker && worker.name) || '').trim().toLowerCase();
+      if (key) selected[key] = worker;
+    });
+    box.innerHTML = '';
+    if (selectedBox) {
+      selectedBox.innerHTML = '';
+      if (_workImportWorkers && _workImportWorkers.length) {
+        _workImportWorkers.forEach(function(worker) {
+          var name = String((worker && worker.name) || '').trim();
+          if (!name) return;
+          var pill = document.createElement('button');
+          pill.type = 'button';
+          pill.className = 'selected-worker-pill';
+          pill.title = 'Remove ' + name;
+          pill.innerHTML = '<span>' + name + '</span><strong>&times;</strong>';
+          pill.onclick = function() {
+            _workImportWorkers = _workImportWorkers.filter(function(entry) {
+              return String((entry && entry.name) || '').trim().toLowerCase() !== name.toLowerCase();
+            });
+            renderWorkOrderImportWorkers();
+          };
+          selectedBox.appendChild(pill);
+        });
+      } else {
+        var hint = document.createElement('div');
+        hint.className = 'selected-worker-empty';
+        hint.textContent = 'No crew selected yet.';
+        selectedBox.appendChild(hint);
+      }
+    }
+
+    if (isLoading && !people.length) {
+      var loading = document.createElement('div');
+      loading.className = 'form-note';
+      loading.textContent = 'Loading crew names...';
+      box.appendChild(loading);
+      return;
+    }
+
+    if (!people.length) {
+      var empty = document.createElement('div');
+      empty.className = 'form-note';
+      empty.textContent = 'No worker names available yet. Refresh once if names do not appear.';
+      box.appendChild(empty);
+      return;
+    }
+
+  people.forEach(function(person) {
+    var name = String((person && person.name) || '').trim();
+    if (!name) return;
+    var key = name.toLowerCase();
+    var chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'person-chip' + (selected[key] ? ' active' : '');
+    chip.textContent = name;
+    chip.onclick = function() {
+      if (selected[key]) {
+        _workImportWorkers = _workImportWorkers.filter(function(worker) {
+          return String((worker && worker.name) || '').trim().toLowerCase() !== key;
+        });
+      } else {
+        _workImportWorkers.push({
+          name: name,
+          role: person.role === 'supervisor' ? 'Supervisor' : 'Worker',
+          uid: person.uid || '',
+          email: person.email || ''
+        });
+      }
+      renderWorkOrderImportWorkers();
+    };
+    box.appendChild(chip);
+  });
+}
+
+function getWorkOrderImportSettings() {
+  var dateEl = document.getElementById('workOrderImportDate');
+  var timeEl = document.getElementById('workOrderImportTime');
+  var spacingEl = document.getElementById('workOrderImportSpacing');
+  var safeWorkers = (_workImportWorkers || []).filter(function(worker) {
+    return worker && String(worker.name || '').trim();
+  });
+  if (!safeWorkers.length && me && me.name) {
+    safeWorkers = [{ name: me.name, role: me.role === 'supervisor' ? 'Supervisor' : 'Worker' }];
+  }
+  return {
+    jobDate: (dateEl && dateEl.value) || todayISO(),
+    jobTime: (timeEl && timeEl.value) || nowTime(),
+    spacingMinutes: Math.max(0, Number((spacingEl && spacingEl.value) || 0)),
+    workers: safeWorkers.map(function(worker) {
+      return {
+        name: String(worker.name || '').trim(),
+        role: String(worker.role || 'Worker').trim() || 'Worker',
+        uid: String(worker.uid || '').trim(),
+        email: String(worker.email || '').trim()
+      };
+    })
+  };
+}
+
+function addMinutesToClockTime(timeText, minutesToAdd) {
+  var text = String(timeText || '').trim();
+  var match = text.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return nowTime();
+  var hours = Number(match[1]);
+  var minutes = Number(match[2]);
+  var total = (hours * 60) + minutes + Math.max(0, Number(minutesToAdd || 0));
+  total = ((total % 1440) + 1440) % 1440;
+  var nextHours = Math.floor(total / 60);
+  var nextMinutes = total % 60;
+  return String(nextHours).padStart(2, '0') + ':' + String(nextMinutes).padStart(2, '0');
+}
+
 function parseWorkOrderText(text) {
   return (text || '')
     .split(/\r?\n/)
     .map(function(line) { return line.trim(); })
     .filter(Boolean)
     .map(function(line, idx) {
-      var match = line.match(/^\s*([A-Za-z]{0,4}\d[\w-]*)\s*[-:]\s*(.+)\s*$/);
+      if (/^add to bookmarks$/i.test(line)) return null;
+
+      var match = line.match(/^\s*(?:(WO)\s*)?(\d{7}|[A-Za-z]{0,4}\d[\w-]*)\s*[-:]\s*(.+)\s*$/i);
       if (match) {
+        var prefix = String(match[1] || '').trim().toUpperCase();
+        var number = String(match[2] || '').trim();
         return {
           id: idx,
           raw: line,
-          workOrder: match[1].trim(),
-          taskText: match[2].trim(),
+          workOrder: prefix ? (prefix + ' ' + number) : number,
+          taskText: match[3].trim(),
         };
       }
+
+      var cells = line.split(/\t+/).map(function(cell) {
+        return String(cell || '').replace(/\s+/g, ' ').trim();
+      }).filter(Boolean);
+
+      if (cells.length) {
+        var woCell = cells.find(function(cell) {
+          return /^\d{7}$/.test(cell) || /^WO\s*\d{7}$/i.test(cell);
+        });
+
+        if (woCell) {
+          var cleanWO = String(woCell).replace(/^WO\s*/i, '').trim();
+          var taskCell = cells.find(function(cell) {
+            if (!cell || cell === woCell) return false;
+            if (/^\d{7}$/.test(cell)) return false;
+            if (/^(APPR|INPR|DRAFT|PM|AM)$/i.test(cell)) return false;
+            if (/^\d{2}\/\d{2}\/\d{2}/.test(cell)) return false;
+            if (/^\d+:\d+$/.test(cell)) return false;
+            return /[A-Za-z]/.test(cell) && cell.length > 10;
+          }) || cells[cells.indexOf(woCell) + 1] || '';
+
+          return {
+            id: idx,
+            raw: line,
+            workOrder: cleanWO,
+            taskText: String(taskCell || '').trim() || line,
+          };
+        }
+      }
+
       return {
         id: idx,
         raw: line,
         workOrder: '',
         taskText: line,
       };
-    });
+    })
+    .filter(Boolean);
 }
 
 function titleCaseWords(text) {
@@ -228,6 +519,10 @@ function getImportPreviewTaskDesc(taskText, tmpl) {
 function describeImportMatch(item) {
   var sourceText = item.taskText || item.raw || '';
   var tmpl = matchJobType(sourceText)[0] || null;
+  var importedWeather = (typeof getPSIWeatherPayload === 'function')
+    ? getPSIWeatherPayload(todayISO(), {})
+    : { weather: '', weatherTemp: undefined, weatherCode: undefined, weatherAdvisory: [] };
+
   return {
     item: item,
     template: tmpl,
@@ -289,12 +584,15 @@ function renderWorkOrderPreview(forcedText) {
 }
 
 function buildImportedPSIRecord(item, tmpl, opts) {
-  opts = opts || {};
-  var hazards = new Set((tmpl && tmpl.selectedHazards) || []);
-  var ppe = new Set((tmpl && tmpl.ppeSelected) || []);
-  var aiPack = opts.aiPack || ((window.AIEngine && typeof AIEngine.generateTaskPack === 'function')
-    ? AIEngine.generateTaskPack(item.taskText, tmpl)
-    : null);
+    opts = opts || {};
+    var hazards = new Set((tmpl && tmpl.selectedHazards) || []);
+    var ppe = new Set((tmpl && tmpl.ppeSelected) || []);
+    var importedWeather = (typeof getPSIWeatherPayload === 'function')
+      ? getPSIWeatherPayload(opts.jobDate || todayISO(), {})
+      : { weather: '', weatherTemp: undefined, weatherCode: undefined, weatherAdvisory: [] };
+    var aiPack = opts.aiPack || ((window.AIEngine && typeof AIEngine.generateTaskPack === 'function')
+      ? AIEngine.generateTaskPack(item.taskText, tmpl, { workOrder: item.workOrder || '' })
+      : null);
   var taskStepsText = aiPack ? (aiPack.taskStepsText || '') : '';
   var hazardText = aiPack ? (aiPack.hazardText || '') : '';
   var controlText = aiPack ? (aiPack.controlText || '') : '';
@@ -306,8 +604,8 @@ function buildImportedPSIRecord(item, tmpl, opts) {
     updatedAt: Date.now(),
     jobCode: tmpl ? tmpl.code : '',
     jobTitle: opts.jobTitle || (aiPack && aiPack.shortTitle) || deriveShortJobTitle(item.taskText, tmpl),
-    jobDate: todayISO(),
-    jobTime: nowTime(),
+    jobDate: opts.jobDate || todayISO(),
+    jobTime: opts.jobTime || nowTime(),
       taskDesc: (tmpl && (tmpl.taskDesc || tmpl.name)) || normalizeTaskText(item.taskText) || 'Imported work order',
     taskLoc: (tmpl && tmpl.taskLoc) || '',
     jobNumber: item.workOrder || '',
@@ -322,17 +620,17 @@ function buildImportedPSIRecord(item, tmpl, opts) {
     taskStepsText: taskStepsText,
     hazardText: hazardText,
     controlText: controlText,
-    ppe: Array.from(ppe),
-    conditions: {},
-    workers: [{ name: me.name, role: me.role === 'supervisor' ? 'Supervisor' : 'Worker' }],
-    sigs: {},
-    initials: [],
-    weather: window._wx || '',
-    weatherTemp: window._wxTemp != null ? window._wxTemp : undefined,
-    weatherCode: window._wxCode != null ? window._wxCode : undefined,
-    weatherAdvisory: (typeof getWeatherAdvisories === 'function')
-      ? getWeatherAdvisories().map(function(tip) { return tip.text; })
-      : [],
+      ppe: Array.from(ppe),
+      conditions: {},
+      workers: (opts.workers && opts.workers.length) ? opts.workers.slice() : [{ name: me.name, role: me.role === 'supervisor' ? 'Supervisor' : 'Worker' }],
+      importBatchId: String(opts.importBatchId || '').trim(),
+      importBatchMode: String(opts.importBatchMode || '').trim(),
+      sigs: {},
+      initials: [],
+    weather: importedWeather.weather,
+    weatherTemp: importedWeather.weatherTemp,
+    weatherCode: importedWeather.weatherCode,
+    weatherAdvisory: importedWeather.weatherAdvisory,
     approved: false,
     submittedForApproval: false,
   };
@@ -342,6 +640,7 @@ function importWorkOrders(mode) {
   var textEl = document.getElementById('workOrderImportText');
   var items = parseWorkOrderText(textEl ? textEl.value : '');
   if (!items.length) { toast('Paste at least one work order'); return; }
+  var batchSettings = getWorkOrderImportSettings();
 
   var created = [];
   var aiSources = [];
@@ -351,10 +650,11 @@ function importWorkOrders(mode) {
     if (textEl) textEl.value = '';
     renderWorkOrderPreview('');
     closeWorkOrderImportModal();
-    me.activePSI = null;
-    hide('editor');
-    show('dashboard');
-    refreshDash();
+  me.activePSI = null;
+  if (typeof setSessionActivePSI === 'function') setSessionActivePSI('');
+  hide('editor');
+  show('dashboard');
+  refreshDash();
     toast('Created ' + created.length + ' PSI draft' + (created.length !== 1 ? 's' : ''));
     if (aiSources.length) {
       var usedRemote = aiSources.indexOf('remote') !== -1;
@@ -364,27 +664,33 @@ function importWorkOrders(mode) {
     }
   }
 
-  if (mode === 'group') {
+    if (mode === 'group') {
     var joinedTask = items.map(function(item) {
       return normalizeTaskText(item.taskText) || item.taskText || item.raw;
     }).filter(Boolean).join(' | ');
-    var groupedItem = {
-      raw: items.map(function(item) { return item.raw; }).join('\n'),
-      workOrder: items.map(function(item) { return item.workOrder; }).filter(Boolean).join(', '),
-      taskText: joinedTask,
-    };
-    var groupedTemplate = matchJobType(joinedTask)[0] || null;
-    var groupedPromise = (window.AIEngine && typeof AIEngine.generateTaskPackAsync === 'function')
-      ? AIEngine.generateTaskPackAsync(joinedTask, groupedTemplate)
-      : Promise.resolve(null);
-    groupedPromise.then(function(aiPack) {
-      aiSources.push(String((aiPack && aiPack._aiSource) || 'local').toLowerCase());
-      var groupedRecord = buildImportedPSIRecord(groupedItem, groupedTemplate, {
-        aiPack: aiPack,
-        jobTitle: (aiPack && aiPack.shortTitle) || (groupedTemplate ? groupedTemplate.name : 'Grouped Work Orders'),
-        workOrders: items.map(function(item) {
-          return {
-            number: item.workOrder || '',
+      var groupedItem = {
+        raw: items.map(function(item) { return item.raw; }).join('\n'),
+        workOrder: items.map(function(item) { return item.workOrder; }).filter(Boolean).join(', '),
+        taskText: joinedTask,
+      };
+      var groupedTemplate = matchJobType(joinedTask)[0] || null;
+      var groupedBatchId = genId();
+      var groupedPromise = (window.AIEngine && typeof AIEngine.generateTaskPackAsync === 'function')
+        ? AIEngine.generateTaskPackAsync(joinedTask, groupedTemplate, { workOrder: groupedItem.workOrder || '' })
+        : Promise.resolve(null);
+      groupedPromise.then(function(aiPack) {
+        aiSources.push(String((aiPack && aiPack._aiSource) || 'local').toLowerCase());
+        var groupedRecord = buildImportedPSIRecord(groupedItem, groupedTemplate, {
+          aiPack: aiPack,
+          jobTitle: (aiPack && aiPack.shortTitle) || (groupedTemplate ? groupedTemplate.name : 'Grouped Work Orders'),
+          jobDate: batchSettings.jobDate,
+          jobTime: batchSettings.jobTime,
+          workers: batchSettings.workers,
+          importBatchId: groupedBatchId,
+          importBatchMode: 'group',
+          workOrders: items.map(function(item) {
+            return {
+              number: item.workOrder || '',
             description: item.taskText || '',
             raw: item.raw || '',
           };
@@ -393,19 +699,27 @@ function importWorkOrders(mode) {
       writePSI(groupedRecord);
       created.push(groupedRecord);
       finishImport();
-    });
-    return;
-  }
-  Promise.all(items.map(function(item) {
-    var tmpl = matchJobType(item.taskText || item.raw)[0] || null;
-    var aiPromise = (window.AIEngine && typeof AIEngine.generateTaskPackAsync === 'function')
-      ? AIEngine.generateTaskPackAsync(item.taskText || item.raw, tmpl)
-      : Promise.resolve(null);
-    return aiPromise.then(function(aiPack) {
-      aiSources.push(String((aiPack && aiPack._aiSource) || 'local').toLowerCase());
-      var record = buildImportedPSIRecord(item, tmpl, { aiPack: aiPack });
-      writePSI(record);
-      created.push(record);
+      });
+      return;
+    }
+    var splitBatchId = genId();
+    Promise.all(items.map(function(item, itemIndex) {
+      var tmpl = matchJobType(item.taskText || item.raw)[0] || null;
+      var aiPromise = (window.AIEngine && typeof AIEngine.generateTaskPackAsync === 'function')
+        ? AIEngine.generateTaskPackAsync(item.taskText || item.raw, tmpl, { workOrder: item.workOrder || '' })
+        : Promise.resolve(null);
+      return aiPromise.then(function(aiPack) {
+        aiSources.push(String((aiPack && aiPack._aiSource) || 'local').toLowerCase());
+        var record = buildImportedPSIRecord(item, tmpl, {
+          aiPack: aiPack,
+          jobDate: batchSettings.jobDate,
+          jobTime: addMinutesToClockTime(batchSettings.jobTime, batchSettings.spacingMinutes * itemIndex),
+          workers: batchSettings.workers,
+          importBatchId: splitBatchId,
+          importBatchMode: 'split'
+        });
+        writePSI(record);
+        created.push(record);
     });
   })).then(finishImport);
 }
@@ -418,7 +732,10 @@ function openPSI(id) {
   if (!psi) { toast('PSI not found'); return; }
 
   me.activePSI = id;
+  if (typeof setSessionActivePSI === 'function') setSessionActivePSI(id);
+  if (typeof startActivePSISync === 'function') startActivePSISync(id);
   _liftPromptShownFor = psi.liftUnitKey ? psi.id : null;
+  _taskTextRendered = false;
 
   // Restore state
   st.hazards       = new Set(psi.hazards       || []);
@@ -444,6 +761,27 @@ function openPSI(id) {
     st.taskStepsText = '';
     st.hazardText    = '';
     st.controlText   = '';
+  }
+
+  if (!psi.approved && !userHasFullAccess() && me && me.name) {
+    const myName = String(me.name || '').trim().toLowerCase();
+    const myUid = String(me.uid || '').trim();
+    const myEmail = String(me.email || '').trim().toLowerCase();
+    const alreadyListed = st.workers.some(function(w) {
+      var worker = w || {};
+      if (myUid && String(worker.uid || '').trim() === myUid) return true;
+      if (myEmail && String(worker.email || '').trim().toLowerCase() === myEmail) return true;
+      return String(worker.name || '').trim().toLowerCase() === myName;
+    });
+    if (!alreadyListed) {
+      st.workers.push({
+        name: me.name,
+        role: 'Worker',
+        uid: me.uid || '',
+        email: me.email || ''
+      });
+      savePSI({}, { immediate: true });
+    }
   }
 
   setTimeout(function() { restoreConditionPanel(st.conditions); }, 50);
@@ -483,6 +821,7 @@ function showEditor(stepNum) {
   hide('pairUpPane');
   hide('liftPane');
   show('editor');
+  if (typeof setSessionActivePane === 'function') setSessionActivePane('editor');
   goStep(stepNum);
 }
 
@@ -505,9 +844,9 @@ function goStep(n) {
     }
   }
 
-  // Step 6 is supervisor-only
-  if (n === 6 && !userHasFullAccess()) {
-    toast('Supervisor access required');
+  // Supervisor approval now happens from the Review queue only.
+  if (n === 6) {
+    toast('Supervisor approval happens in Review');
     return;
   }
 
@@ -518,6 +857,7 @@ function goStep(n) {
   }
 
   _curStep = n;
+  if (typeof setSessionActivePSIStep === 'function') setSessionActivePSIStep(n);
 
   // Update step tabs
   const tabs = document.querySelectorAll('.step-tab');
@@ -526,8 +866,8 @@ function goStep(n) {
     tab.classList.toggle('done',   i < n);
   });
 
-  // Update progress bar (7 steps, 0â€“6)
-  const pct = Math.round((n / 6) * 100);
+  // Update progress bar (6 visible steps, 0-5)
+  const pct = Math.round((Math.min(n, 5) / 5) * 100);
   const bar = document.getElementById('stepBar');
   if (bar) bar.style.width = pct + '%';
 
@@ -565,27 +905,57 @@ function onPSIDateChange(dateStr) {
       updateWeatherForPSIDate(dateStr);
     });
   }
+  renderWeatherAdvisory();
 }
 
 
 // â”€â”€ BACK TO DASHBOARD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function edBack() {
+  var activePsi = me.activePSI && typeof loadPSI === 'function' ? loadPSI(me.activePSI) : null;
+  if (isUnpublishedPSI(activePsi)) {
+    if (!confirm('This PSI has not been published yet. Discard it?')) return;
+    if (typeof deletePSI === 'function') deletePSI(me.activePSI);
+    if (typeof flushPendingFirebaseWrites === 'function') flushPendingFirebaseWrites();
+    if (typeof stopActivePSISync === 'function') stopActivePSISync();
+    me.activePSI = null;
+    if (typeof setSessionActivePSI === 'function') setSessionActivePSI('');
+    if (typeof setSessionActivePSIStep === 'function') setSessionActivePSIStep(0);
+    if (typeof setSessionActivePane === 'function') setSessionActivePane('dashboard');
+    _curStep = 0;
+
+    hide('editor');
+    show('dashboard');
+    refreshDash();
+    return;
+  }
   onTaskTextInput();   // sync textarea â†’ state before saving
-  savePSI({});         // save immediately, NOT debounced
+  savePSI({}, { immediate: true });         // save immediately, NOT debounced
+  if (typeof flushPendingFirebaseWrites === 'function') flushPendingFirebaseWrites();
+  if (typeof stopActivePSISync === 'function') stopActivePSISync();
   me.activePSI = null;
+  if (typeof setSessionActivePSI === 'function') setSessionActivePSI('');
+  if (typeof setSessionActivePSIStep === 'function') setSessionActivePSIStep(0);
+  if (typeof setSessionActivePane === 'function') setSessionActivePane('dashboard');
   _curStep = 0;
 
   hide('editor');
   show('dashboard');
   refreshDash();
+  if (typeof firebaseRefreshPSIsFromServer === 'function') {
+    firebaseRefreshPSIsFromServer(true).catch(function() {});
+  }
+  setTimeout(function() {
+    if (typeof refreshDash === 'function') refreshDash();
+  }, 180);
 }
 
 
 // â”€â”€ SAVE PSI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-function savePSI(extra) {
+function savePSI(extra, opts) {
   if (!me.activePSI) return;
+  opts = opts || {};
 
   // Read existing record first (to preserve sigs already saved)
   const existing = loadPSI(me.activePSI) || {};
@@ -595,6 +965,63 @@ function savePSI(extra) {
 
   // Workers on approved PSIs can ONLY update worker/sig fields â€” never safety content
   const lockSafety = existing.approved && !userHasFullAccess();
+  const editingTaskText = !lockSafety && _curStep === 2 && _taskTextRendered;
+
+  if (editingTaskText) {
+    const stepsEl   = document.getElementById('taskStepsArea');
+    const hazardEl  = document.getElementById('hazardTextArea');
+    const controlEl = document.getElementById('controlTextArea');
+    if (stepsEl)   st.taskStepsText = stepsEl.value;
+    if (hazardEl)  st.hazardText    = hazardEl.value;
+    if (controlEl) st.controlText   = controlEl.value;
+  }
+
+  const currentWorkers = (typeof normalizePSIWorkers === 'function')
+    ? normalizePSIWorkers(st.workers)
+    : (st.workers || []).filter(function(w) {
+        return w && String(w.name || '').trim();
+      });
+  const existingWorkers = (typeof normalizePSIWorkers === 'function')
+    ? normalizePSIWorkers(existing.workers || [])
+    : (existing.workers || []).filter(function(w) {
+        return w && String(w.name || '').trim();
+      });
+  const recoveredWorkers = (!currentWorkers.length && typeof recoverPSIWorkers === 'function')
+    ? normalizePSIWorkers((recoverPSIWorkers(Object.assign({}, existing)) || {}).workers || [])
+    : [];
+  const safeWorkers = currentWorkers.length ? currentWorkers : (existingWorkers.length ? existingWorkers : recoveredWorkers);
+  const currentHazards = Array.from(st.hazards || []);
+  const currentCustomHazards = Array.from(st.customHazards || []);
+  const safeHazards = currentHazards.length ? currentHazards : (existing.hazards || []);
+  const safeCustomHazards = currentCustomHazards.length ? currentCustomHazards : (existing.customHazards || []);
+  const existingTaskStepsText = String(existing.taskStepsText || '');
+  const existingHazardText = String(existing.hazardText || '');
+  const existingControlText = String(existing.controlText || '');
+  const currentTaskStepsText = String(st.taskStepsText || '');
+  const currentHazardText = String(st.hazardText || '');
+  const currentControlText = String(st.controlText || '');
+  const safeTaskStepsText = (!editingTaskText && !currentTaskStepsText.trim() && existingTaskStepsText.trim())
+    ? existingTaskStepsText
+    : currentTaskStepsText;
+  const safeHazardText = (!editingTaskText && !currentHazardText.trim() && existingHazardText.trim())
+    ? existingHazardText
+    : currentHazardText;
+  const safeControlText = (!editingTaskText && !currentControlText.trim() && existingControlText.trim())
+    ? existingControlText
+    : currentControlText;
+  const psiDateValue = lockSafety
+    ? existing.jobDate
+    : ((document.getElementById('jobDate') || {}).value || existing.jobDate || todayISO());
+  const psiWeather = lockSafety
+    ? {
+        weather: existing.weather,
+        weatherTemp: existing.weatherTemp,
+        weatherCode: existing.weatherCode,
+        weatherAdvisory: existing.weatherAdvisory || []
+      }
+    : ((typeof getPSIWeatherPayload === 'function')
+      ? getPSIWeatherPayload(psiDateValue, st.conditions)
+      : { weather: '', weatherTemp: undefined, weatherCode: undefined, weatherAdvisory: [] });
 
   const record = Object.assign({}, existing, {
     id:          me.activePSI,
@@ -605,41 +1032,38 @@ function savePSI(extra) {
     // Safety fields: only update if user has permission
     jobCode:       lockSafety ? existing.jobCode      : (_selJob || existing.jobCode || ''),
     jobTitle:      existing.jobTitle || '',
-    jobDate:       lockSafety ? existing.jobDate      : ((document.getElementById('jobDate')   || {}).value || existing.jobDate   || todayISO()),
+    jobDate:       psiDateValue,
     jobTime:       lockSafety ? existing.jobTime      : ((document.getElementById('jobTime')   || {}).value || existing.jobTime   || nowTime()),
     taskDesc:      lockSafety ? existing.taskDesc     : ((document.getElementById('jobDesc')   || {}).value || existing.taskDesc   || ''),
     taskLoc:       lockSafety ? existing.taskLoc      : ((document.getElementById('jobLoc')    || {}).value || existing.taskLoc    || ''),
     jobNumber:     lockSafety ? existing.jobNumber    : ((document.getElementById('jobNumber') || {}).value || existing.jobNumber  || ''),
     workOrders:    existing.workOrders || [],
     musterPoint:   lockSafety ? existing.musterPoint  : ((document.getElementById('jobMuster') || {}).value || existing.musterPoint || ''),
-    hazards:       lockSafety ? existing.hazards      : Array.from(st.hazards),
-    customHazards: lockSafety ? existing.customHazards: Array.from(st.customHazards),
-    taskStepsText: lockSafety ? existing.taskStepsText: st.taskStepsText,
-    hazardText:    lockSafety ? existing.hazardText   : st.hazardText,
-    controlText:   lockSafety ? existing.controlText  : st.controlText,
+    hazards:       lockSafety ? existing.hazards      : safeHazards,
+    customHazards: lockSafety ? existing.customHazards: safeCustomHazards,
+    taskStepsText: lockSafety ? existing.taskStepsText: safeTaskStepsText,
+    hazardText:    lockSafety ? existing.hazardText   : safeHazardText,
+    controlText:   lockSafety ? existing.controlText  : safeControlText,
     ppe:           lockSafety ? existing.ppe          : Array.from(st.ppe),
     conditions:    lockSafety ? existing.conditions   : st.conditions,
 
     // Worker fields: always allow (checked separately in renderSigStep)
-    workers:     st.workers,
+    workers:     safeWorkers,
     sigs:        mergedSigs,
 
     // Weather: don't overwrite on locked saves
-    weather:         lockSafety ? existing.weather         : (window._wx || ''),
-    weatherTemp:     lockSafety ? existing.weatherTemp     : (window._wxTemp != null ? window._wxTemp : undefined),
-    weatherCode:     lockSafety ? existing.weatherCode     : (window._wxCode != null ? window._wxCode : undefined),
-    weatherAdvisory: lockSafety ? existing.weatherAdvisory : (
-      (typeof getWeatherAdvisories === 'function')
-        ? getWeatherAdvisories().map(function(tip) { return tip.text; })
-        : []
-    ),
+    weather:         psiWeather.weather || '',
+    weatherTemp:     psiWeather.weatherTemp,
+    weatherCode:     psiWeather.weatherCode,
+    weatherAdvisory: psiWeather.weatherAdvisory || [],
   }, extra);
 
   if (!lockSafety) {
     record.liftRequired = psiNeedsLift(record);
   }
 
-  writePSI(record);
+  if (opts.immediate && typeof writePSINow === 'function') writePSINow(record);
+  else writePSI(record);
   if (!lockSafety && typeof refreshLiftLinkForPSI === 'function') {
     refreshLiftLinkForPSI(record);
   }
@@ -684,8 +1108,9 @@ function renderJobLib(query) {
 
   // Built-in templates
   const builtins = Object.values(BUILTIN_TEMPLATES).filter(function(t) {
+    if (typeof isTemplateHidden === 'function' && isTemplateHidden(t.code)) return false;
     if (!q) return true;
-    return (t.name + ' ' + t.code + ' ' + (t.desc || '')).toLowerCase().includes(q);
+    return (t.name + ' ' + (t.displayCode || t.code) + ' ' + (t.desc || '')).toLowerCase().includes(q);
   });
 
   // Sort by usage descending
@@ -704,12 +1129,13 @@ function renderJobLib(query) {
     appendJobCategory(lib, cat, groupedBuiltins[cat], usage, false);
   });
 
-  // Learned / custom templates
-  const learned = loadLearned();
-  const learnedList = Object.values(learned).filter(function(t) {
-    if (!q) return true;
-    return (t.name + ' ' + t.code).toLowerCase().includes(q);
-  });
+  // Approved custom templates only
+  const learnedList = (typeof getApprovedLearnedTemplates === 'function')
+    ? getApprovedLearnedTemplates().filter(function(t) {
+        if (!q) return true;
+        return (t.name + ' ' + (t.displayCode || t.code) + ' ' + (t.desc || '')).toLowerCase().includes(q);
+      })
+    : [];
 
   if (learnedList.length > 0) {
     appendJobCategory(lib, 'My Custom Templates', learnedList, usage, true);
@@ -811,7 +1237,7 @@ function setJobLibraryCollapsed(collapsed, tmpl) {
     '<div class="job-template-picked-head">' +
       '<div>' +
         '<div class="job-template-picked-label">Template selected</div>' +
-        '<div class="job-template-picked-name">' + (tmpl.name || tmpl.code || 'Job Template') + '</div>' +
+        '<div class="job-template-picked-name">' + (tmpl.name || tmpl.displayCode || tmpl.code || 'Job Template') + '</div>' +
         '<div class="job-template-picked-desc">' + (tmpl.desc || jobCategoryLabel(tmpl)) + '</div>' +
       '</div>' +
       '<button class="job-template-picked-btn" type="button" onclick="reopenJobLibrary()">Change Template</button>' +
@@ -839,13 +1265,93 @@ function getTemplateTaskDesc(tmpl, code) {
   return (tmpl && (tmpl.taskDesc || tmpl.name)) || code || '';
 }
 
+function getExactTemplatePack(tmpl, code) {
+  var wording = (tmpl && typeof applyWording === 'function' && getWording(code))
+    ? applyWording(code)
+    : null;
+  return {
+    taskDesc: getTemplateTaskDesc(tmpl, code),
+    taskStepsText: wording && wording.taskStepsText
+      ? wording.taskStepsText
+      : ((tmpl && tmpl.taskStepsText != null)
+        ? (tmpl.taskStepsText || '')
+        : ((tmpl && tmpl.taskRows)
+          ? tmpl.taskRows.map(function(r) { return r[0] || ''; }).filter(Boolean).join('\n')
+          : '')),
+    hazardText: wording && wording.hazardText
+      ? wording.hazardText
+      : ((tmpl && tmpl.hazardText != null)
+        ? (tmpl.hazardText || '')
+        : ((tmpl && tmpl.taskRows)
+          ? tmpl.taskRows.map(function(r) { return r[1] || ''; }).filter(Boolean).join('\n')
+          : '')),
+    controlText: wording && wording.controlText
+      ? wording.controlText
+      : ((tmpl && tmpl.controlText != null)
+        ? (tmpl.controlText || '')
+        : ((tmpl && tmpl.taskRows)
+          ? tmpl.taskRows.map(function(r) { return r[2] || ''; }).filter(Boolean).join('\n')
+          : ''))
+  };
+}
+
+function applyGeneratedTemplatePack(pack) {
+  if (!pack) return;
+  st.taskStepsText = pack.taskStepsText || '';
+  st.hazardText = pack.hazardText || '';
+  st.controlText = pack.controlText || '';
+  renderTasks();
+  schedSave();
+  savePSI({});
+}
+
+function rewriteSelectedJobWording(code, tmpl, mode) {
+  if (!code || !window.AIEngine) return;
+
+  var taskText = ((document.getElementById('jobDesc') || {}).value || '').trim()
+    || getTemplateTaskDesc(tmpl, code);
+  var token = ++_jobWordingRequestToken;
+
+  var localPack = mode === 'regenerate'
+    ? (typeof AIEngine.regenerateForCurrentJob === 'function'
+      ? AIEngine.regenerateForCurrentJob(code, taskText, tmpl)
+      : null)
+    : (typeof AIEngine.generateTaskPack === 'function'
+      ? AIEngine.generateTaskPack(taskText, tmpl)
+      : null);
+
+  if (localPack && token === _jobWordingRequestToken && _selJob === code) {
+    applyGeneratedTemplatePack(localPack);
+  }
+
+  var asyncPromise = mode === 'regenerate'
+    ? (typeof AIEngine.regenerateForCurrentJobAsync === 'function'
+      ? AIEngine.regenerateForCurrentJobAsync(code, taskText, tmpl)
+      : null)
+    : (typeof AIEngine.generateTaskPackAsync === 'function'
+      ? AIEngine.generateTaskPackAsync(taskText, tmpl)
+      : null);
+
+  if (asyncPromise && typeof asyncPromise.then === 'function') {
+    asyncPromise.then(function(pack) {
+      if (token !== _jobWordingRequestToken) return;
+      if (_selJob !== code) return;
+      applyGeneratedTemplatePack(pack);
+      toastAISource(pack, 'Wording rewritten with');
+    }).catch(function() {});
+  } else if (localPack) {
+    toastAISource(localPack, 'Wording rewritten with');
+  }
+}
+
 function makeJobCard(t, count, isLearned) {
   const card = document.createElement('div');
   card.className = 'job-card' + (_selJob === t.code ? ' active' : '');
+  const displayCode = (t && (t.displayCode || t.code)) || '';
 
   const codeEl = document.createElement('div');
   codeEl.className   = 'jc-code';
-  codeEl.textContent = t.code;
+  codeEl.textContent = displayCode;
 
   const nameWrap = document.createElement('div');
   nameWrap.style.flex = '1';
@@ -898,12 +1404,11 @@ function selectJob(code, tmpl) {
   const locEl   = document.getElementById('jobLoc');
   const numEl   = document.getElementById('jobNumber');
   const mustEl  = document.getElementById('jobMuster');
-  var aiPack = (window.AIEngine && typeof AIEngine.generateTaskPack === 'function')
-    ? AIEngine.generateTaskPack(tmpl.taskDesc || tmpl.name || code, tmpl)
-    : null;
-
   if (descEl) {
-    descEl.value = getTemplateTaskDesc(tmpl, code);
+    var currentDesc = String(descEl.value || '').trim();
+    if (!currentDesc) {
+      descEl.value = getTemplateTaskDesc(tmpl, code);
+    }
   }
   if (locEl   && tmpl.taskLoc)     locEl.value   = tmpl.taskLoc;
   if (numEl   && tmpl.jobNumber)   numEl.value   = tmpl.jobNumber;
@@ -912,26 +1417,7 @@ function selectJob(code, tmpl) {
   // Pre-fill hazards
   st.hazards = new Set(tmpl.selectedHazards || []);
 
-  // Pre-fill task / hazard / control text
-  // New format: template stores text directly (set via template editor)
-  // Old format: template stores taskRows array (built-in templates)
-  if (aiPack) {
-    st.taskStepsText = aiPack.taskStepsText || '';
-    st.hazardText    = aiPack.hazardText    || '';
-    st.controlText   = aiPack.controlText   || '';
-  } else if (tmpl.taskStepsText != null || tmpl.hazardText != null || tmpl.controlText != null) {
-    st.taskStepsText = tmpl.taskStepsText || '';
-    st.hazardText    = tmpl.hazardText    || '';
-    st.controlText   = tmpl.controlText   || '';
-  } else if (tmpl.taskRows && tmpl.taskRows.length > 0) {
-    st.taskStepsText = tmpl.taskRows.map(function(r) { return r[0] || ''; }).filter(Boolean).join('\n');
-    st.hazardText    = tmpl.taskRows.map(function(r) { return r[1] || ''; }).filter(Boolean).join('\n');
-    st.controlText   = tmpl.taskRows.map(function(r) { return r[2] || ''; }).filter(Boolean).join('\n');
-  } else {
-    st.taskStepsText = '';
-    st.hazardText    = '';
-    st.controlText   = '';
-  }
+  rewriteSelectedJobWording(code, tmpl, 'generate');
 
   // Pre-fill PPE
   st.ppe = new Set(tmpl.ppeSelected || []);
@@ -954,21 +1440,6 @@ function selectJob(code, tmpl) {
     conditions: st.conditions,
   });
   maybePromptLiftLink(record);
-  if (window.AIEngine && typeof AIEngine.generateTaskPackAsync === 'function') {
-    AIEngine.generateTaskPackAsync(tmpl.taskDesc || tmpl.name || code, tmpl).then(function(remotePack) {
-      if (!remotePack || _selJob !== code) return;
-      st.taskStepsText = remotePack.taskStepsText || st.taskStepsText;
-      st.hazardText    = remotePack.hazardText || st.hazardText;
-      st.controlText   = remotePack.controlText || st.controlText;
-      renderTasks();
-      savePSI({
-        jobTitle: remotePack.shortTitle || (tmpl && tmpl.name) || '',
-        taskDesc: getTemplateTaskDesc(tmpl, code)
-      });
-      toastAISource(remotePack, 'Wording source:');
-    });
-  }
-
   // Re-render library to show active state
   renderJobLib((document.getElementById('jobSearch') || {}).value || '');
   setJobLibraryCollapsed(true, tmpl);
@@ -980,6 +1451,7 @@ function selectJob(code, tmpl) {
 // Silently adds weather-relevant hazards to st.hazards when conditions warrant.
 
 function autoAddWeatherHazards() {
+  if (!(st.conditions.outside || st.conditions.weatherExp)) return;
   var temp = window._wxTemp;
   var code = window._wxCode;
   if (temp === null && code === null) return;
@@ -1051,6 +1523,264 @@ function showJobMatches(text) {
   });
 }
 
+function inferConditionsFromJobText(text) {
+  var lower = String(text || '').toLowerCase();
+  var next = {};
+
+  function hasAny(words) {
+    return words.some(function(word) { return lower.indexOf(word) !== -1; });
+  }
+
+  if (hasAny(['outside', 'outdoor', 'roof', 'apron', 'runway', 'airside', 'bridge', 'terminal exterior'])) next.outside = true;
+  if (hasAny(['weather', 'snow', 'ice', 'rain', 'wind', 'cold', 'hot'])) next.weatherExp = true;
+  if (hasAny(['night', 'overnight', 'after hours'])) next.night = true;
+  if (hasAny(['ladder', 'step ladder', 'extension ladder'])) next.ladder = true;
+  if (hasAny(['lift', 'mewp', 'scissor', 'boom', 'bucket truck', 'manlift'])) next.lift = true;
+  if (hasAny(['energized', 'live panel', 'live circuit', 'working live'])) next.energized = true;
+  if (hasAny(['loto', 'lockout', 'lock out', 'isolat', 'de-energized', 'de energized'])) next.isolated = true;
+  if (hasAny(['traffic', 'vehicle', 'airside traffic', 'tug', 'equipment traffic'])) next.vehicleTraffic = true;
+  if (hasAny(['public', 'passenger', 'terminal', 'occupied area'])) next.publicPresent = true;
+  if (hasAny(['overhead', 'ceiling', 'above head'])) next.overheadWork = true;
+  if (hasAny(['alone', 'solo'])) next.workingAlone = true;
+  if (hasAny(['confined space', 'tank', 'vault'])) next.confinedSpace = true;
+  if (hasAny(['hot work', 'weld', 'grind', 'torch'])) next.hotWork = true;
+  if (hasAny(['chemical', 'cleaner', 'solvent', 'acid', 'glycol'])) next.chemicals = true;
+  if (hasAny(['heavy lift', 'lift heavy', 'awkward lift', 'manual handling'])) next.heavyLift = true;
+  if (hasAny(['noisy', 'loud area', '85db'])) next.noisyArea = true;
+  if (hasAny(['dust', 'airborne', 'cutting', 'concrete dust', 'fiberglass'])) next.dustAirborne = true;
+  if (hasAny(['permit', 'escort required', 'aoc permit'])) next.permitRequired = true;
+
+  return next;
+}
+
+function getHazardLabelByField(fieldName) {
+  var target = String(fieldName || '').trim();
+  if (!target || typeof HAZARD_MAP === 'undefined') return '';
+  var found = '';
+  Object.keys(HAZARD_MAP || {}).some(function(groupKey) {
+    var group = HAZARD_MAP[groupKey] || {};
+    return (group.items || []).some(function(item) {
+      if (Array.isArray(item) && String(item[1] || '').trim() === target) {
+        found = String(item[0] || '').trim();
+        return true;
+      }
+      if (item && typeof item === 'object' && String(item.field || '').trim() === target) {
+        found = String(item.label || '').trim();
+        return true;
+      }
+      return false;
+    });
+  });
+  return found;
+}
+
+function buildDescriptionHazardLines() {
+  var lines = [];
+  Array.from(st.hazards || []).forEach(function(field) {
+    var label = getHazardLabelByField(field);
+    if (label && lines.indexOf(label) === -1) lines.push(label);
+  });
+  Array.from(st.customHazards || []).forEach(function(label) {
+    label = String(label || '').trim();
+    if (label && lines.indexOf(label) === -1) lines.push(label);
+  });
+  return lines;
+}
+
+function buildDescriptionControlLines() {
+  var lines = [];
+  var cond = st.conditions || {};
+
+  function add(line) {
+    line = String(line || '').trim();
+    if (line && lines.indexOf(line) === -1) lines.push(line);
+  }
+
+  if (cond.isolated) add('Apply LOTO / isolation before starting work.');
+  if (cond.energized) add('Verify circuit status and use electrical safe work practices.');
+  if (cond.ladder) add('Inspect the ladder and maintain three points of contact.');
+  if (cond.lift) add('Inspect lift equipment, wear fall protection, and maintain clear work area below.');
+  if (cond.vehicleTraffic || cond.publicPresent) add('Use barricades, spotters, and maintain separation from people and traffic.');
+  if (cond.outside || cond.weatherExp) add('Monitor weather and ground conditions and adjust work as needed.');
+  if (cond.overheadWork) add('Barricade below and protect workers from falling objects.');
+  if (cond.hotWork) add('Use hot work controls and keep fire protection ready.');
+  if (cond.confinedSpace) add('Confirm permit, atmospheric checks, and communication requirements before entry.');
+  if (cond.workingAlone) add('Maintain communication and check-in arrangements while working alone.');
+  if (cond.chemicals) add('Review SDS requirements and use spill / containment controls.');
+
+  var ppeLabels = Array.from(st.ppe || []);
+  if (ppeLabels.length) add('Wear required PPE: ' + ppeLabels.join(', ') + '.');
+  add('Follow site procedures, maintain housekeeping, and stop work if conditions change.');
+
+  return lines;
+}
+
+function buildDescriptionFallbackPack(text) {
+  var cleanText = String(text || '').trim();
+  var title = deriveShortJobTitle(cleanText, null);
+  return {
+    shortTitle: title,
+    taskDesc: cleanText || title,
+    taskStepsText: cleanText,
+    hazardText: buildDescriptionHazardLines().join('\n'),
+    controlText: buildDescriptionControlLines().join('\n')
+  };
+}
+
+function mergeGeneratedPackWithFallback(pack, fallbackPack) {
+  var source = pack || {};
+  var fallback = fallbackPack || {};
+  return {
+    shortTitle: source.shortTitle || fallback.shortTitle || '',
+    taskDesc: source.taskDesc || fallback.taskDesc || '',
+    taskStepsText: String(source.taskStepsText || '').trim() || String(fallback.taskStepsText || '').trim(),
+    hazardText: String(source.hazardText || '').trim() || String(fallback.hazardText || '').trim(),
+    controlText: String(source.controlText || '').trim() || String(fallback.controlText || '').trim(),
+    _aiSource: source._aiSource || fallback._aiSource || 'local'
+  };
+}
+
+function aiBuildPSIFromDescription() {
+  var descEl = document.getElementById('jobDesc');
+  var text = String((descEl && descEl.value) || '').trim();
+  if (!text) {
+    toast('Type the work description first');
+    if (descEl) descEl.focus();
+    return;
+  }
+
+  var tmpl = matchJobType(text)[0] || null;
+  if (tmpl) {
+    _selJob = tmpl.code;
+    st.hazards = new Set(tmpl.selectedHazards || []);
+    st.ppe = new Set(tmpl.ppeSelected || []);
+
+    var locEl = document.getElementById('jobLoc');
+    var mustEl = document.getElementById('jobMuster');
+    if (locEl && !String(locEl.value || '').trim() && tmpl.taskLoc) locEl.value = tmpl.taskLoc;
+    if (mustEl && !String(mustEl.value || '').trim() && tmpl.musterPoint) mustEl.value = tmpl.musterPoint;
+  } else {
+    _selJob = null;
+    st.hazards = new Set();
+    st.ppe = new Set();
+  }
+
+  st.conditions = inferConditionsFromJobText(text);
+  resetConditionPanel();
+  restoreConditionPanel(st.conditions);
+
+  var baseTemplate = tmpl || {
+    selectedHazards: [],
+    ppeSelected: [],
+    conditionRules: {}
+  };
+  var conditionResult = applyConditions(baseTemplate, st.conditions);
+  st.hazards = new Set(conditionResult.hazards || []);
+  st.ppe = new Set(conditionResult.ppe || []);
+  autoAddWeatherHazards();
+
+  renderHazards(conditionResult.autoAdded || []);
+  renderPPE();
+  renderJobLib((document.getElementById('jobSearch') || {}).value || '');
+  updateLiftRequirementUI({
+    jobCode: _selJob || '',
+    hazards: Array.from(st.hazards),
+    conditions: st.conditions
+  });
+
+  var taskToken = ++_jobWordingRequestToken;
+  var localPack = (window.AIEngine && typeof AIEngine.generateTaskPack === 'function')
+    ? AIEngine.generateTaskPack(text, tmpl)
+    : null;
+  if (localPack && taskToken === _jobWordingRequestToken) {
+    applyGeneratedTemplatePack(localPack);
+  }
+
+  var asyncPromise = (window.AIEngine && typeof AIEngine.generateTaskPackAsync === 'function')
+    ? AIEngine.generateTaskPackAsync(text, tmpl)
+    : null;
+
+  if (asyncPromise && typeof asyncPromise.then === 'function') {
+    asyncPromise.then(function(pack) {
+      if (taskToken !== _jobWordingRequestToken) return;
+      applyGeneratedTemplatePack(pack);
+      toastAISource(pack, 'PSI built with');
+    }).catch(function() {});
+  } else if (localPack) {
+    toastAISource(localPack, 'PSI built with');
+  }
+
+  savePSI({});
+  var message = tmpl
+    ? ('Matched ' + (tmpl.displayCode || tmpl.code || tmpl.name) + ' and filled PSI')
+    : 'Filled PSI from your description';
+  toast(message);
+}
+
+function aiBuildPSIFromScratch() {
+  var descEl = document.getElementById('jobDesc');
+  var text = String((descEl && descEl.value) || '').trim();
+  if (!text) {
+    toast('Type the work description first');
+    if (descEl) descEl.focus();
+    return;
+  }
+
+  _selJob = null;
+  st.hazards = new Set();
+  st.ppe = new Set();
+  st.conditions = inferConditionsFromJobText(text);
+
+  resetConditionPanel();
+  restoreConditionPanel(st.conditions);
+
+  var baseTemplate = {
+    selectedHazards: [],
+    ppeSelected: [],
+    conditionRules: {}
+  };
+  var conditionResult = applyConditions(baseTemplate, st.conditions);
+  st.hazards = new Set(conditionResult.hazards || []);
+  st.ppe = new Set(conditionResult.ppe || []);
+  autoAddWeatherHazards();
+
+  renderHazards(conditionResult.autoAdded || []);
+  renderPPE();
+  renderJobLib((document.getElementById('jobSearch') || {}).value || '');
+  updateLiftRequirementUI({
+    jobCode: '',
+    hazards: Array.from(st.hazards),
+    conditions: st.conditions
+  });
+
+  var fallbackPack = buildDescriptionFallbackPack(text);
+
+  var taskToken = ++_jobWordingRequestToken;
+  var localPack = (window.AIEngine && typeof AIEngine.generateTaskPack === 'function')
+    ? AIEngine.generateTaskPack(text, null)
+    : null;
+  if (localPack && taskToken === _jobWordingRequestToken) {
+      applyGeneratedTemplatePack(mergeGeneratedPackWithFallback(localPack, fallbackPack));
+  }
+
+  var asyncPromise = (window.AIEngine && typeof AIEngine.generateTaskPackAsync === 'function')
+    ? AIEngine.generateTaskPackAsync(text, null)
+    : null;
+
+  if (asyncPromise && typeof asyncPromise.then === 'function') {
+    asyncPromise.then(function(pack) {
+      if (taskToken !== _jobWordingRequestToken) return;
+        applyGeneratedTemplatePack(mergeGeneratedPackWithFallback(pack, fallbackPack));
+        toastAISource(pack, 'PSI built from description with');
+      }).catch(function() {});
+  } else if (localPack) {
+    toastAISource(localPack, 'PSI built from description with');
+  }
+
+  savePSI({ jobCode: '' });
+  toast('AI built a PSI from your description');
+}
+
 
 // â”€â”€ CONDITION PANEL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -1062,6 +1792,7 @@ function toggleCondition(key, el) {
     st.conditions[key] = true;
     el.classList.add('active');
   }
+  if (typeof renderWeatherAdvisory === 'function') renderWeatherAdvisory();
 }
 
 function applyConditionPanel() {
@@ -1104,33 +1835,8 @@ function regenerateWording() {
   var tmpl = matchJobType((_selJob || '') + ' ' + currentDesc).find(function(item) {
     return item.code === _selJob;
   }) || null;
-  var descEl = document.getElementById('jobDesc');
-  if (descEl) descEl.value = getTemplateTaskDesc(tmpl, _selJob);
-  const result = (window.AIEngine && typeof AIEngine.regenerateForCurrentJob === 'function')
-    ? AIEngine.regenerateForCurrentJob(_selJob, currentDesc, tmpl)
-    : applyWording(_selJob);
-  if (!result) { toast('No wording variants for this template'); return; }
-
-  // Populate the 3 text areas from wording variant
-  st.taskStepsText = result.taskStepsText || '';
-  st.hazardText    = result.hazardText    || '';
-  st.controlText   = result.controlText   || '';
-  renderTasks();
-  schedSave();
-  savePSI({ taskDesc: getTemplateTaskDesc(tmpl, _selJob) });
-  toast('Wording refreshed');
-  if (window.AIEngine && typeof AIEngine.regenerateForCurrentJobAsync === 'function') {
-    AIEngine.regenerateForCurrentJobAsync(_selJob, currentDesc, tmpl).then(function(remoteResult) {
-      if (!remoteResult) return;
-      st.taskStepsText = remoteResult.taskStepsText || st.taskStepsText;
-      st.hazardText    = remoteResult.hazardText    || st.hazardText;
-      st.controlText   = remoteResult.controlText   || st.controlText;
-      renderTasks();
-      schedSave();
-      savePSI({ taskDesc: getTemplateTaskDesc(tmpl, _selJob) });
-      toastAISource(remoteResult, 'Wording source:');
-    });
-  }
+  if (!tmpl || !window.AIEngine) { toast('No wording variants for this template'); return; }
+  rewriteSelectedJobWording(_selJob, tmpl, 'regenerate');
 }
 
 
@@ -1139,6 +1845,8 @@ function regenerateWording() {
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function renderTasks() {
+  _taskTextRendered = true;
+
   // Populate the 3 separate text areas from state
   const stepsEl   = document.getElementById('taskStepsArea');
   const hazardEl  = document.getElementById('hazardTextArea');
@@ -1211,6 +1919,14 @@ function renderPPE() {
 function renderWorkers() {
   const container = document.getElementById('workerRows');
   if (!container) return;
+  if (typeof ensureApprovedWorkerDirectoryLoaded === 'function') {
+    ensureApprovedWorkerDirectoryLoaded().then(function() {
+      const rowsEl = document.getElementById('workerRows');
+      if (!rowsEl) return;
+      if (rowsEl.childElementCount === 0) renderWorkers();
+      else renderWorkerQuickAdd();
+    }).catch(function() {});
+  }
   container.innerHTML = '';
 
   st.workers.forEach(function(w, i) {
@@ -1225,26 +1941,39 @@ function renderWorkerQuickAdd() {
   const chips = document.getElementById('workerQuickChips');
   if (!wrap || !chips) return;
 
-  const people = (typeof loadPersonnel === 'function') ? loadPersonnel() : [];
+  const people = (typeof getWorkerDirectory === 'function')
+    ? getWorkerDirectory()
+    : ((typeof loadPersonnel === 'function')
+      ? loadPersonnel().map(function(name) { return { name: name, role: 'worker' }; })
+      : []);
   if (people.length === 0) { wrap.style.display = 'none'; return; }
 
   // Only show people not already on the job
   const onJob = st.workers.map(function(w) { return (w.name || '').toLowerCase(); });
-  const available = people.filter(function(n) { return !onJob.includes(n.toLowerCase()); });
+  const available = people.filter(function(entry) {
+    var name = String((entry && entry.name) || '').trim().toLowerCase();
+    return name && !onJob.includes(name);
+  });
 
   if (available.length === 0) { wrap.style.display = 'none'; return; }
 
   wrap.style.display = '';
   chips.innerHTML    = '';
 
-  available.forEach(function(name) {
+  available.forEach(function(entry) {
     const chip = document.createElement('button');
     chip.className   = 'personnel-chip';
-    chip.textContent = name;
+    chip.textContent = entry.name;
     chip.type        = 'button';
     chip.onclick     = function() {
-      st.workers.push({ name: name, role: 'Worker' });
-      schedSave();
+      st.workers.push({
+        name: entry.name,
+        role: 'Worker',
+        uid: entry.uid || '',
+        email: entry.email || ''
+      });
+      savePSI({});
+      if (typeof flushPendingFirebaseWrites === 'function') flushPendingFirebaseWrites();
       renderWorkers();   // refreshes list + removes chip
     };
     chips.appendChild(chip);
@@ -1271,6 +2000,8 @@ function makeWorkerRow(worker, idx) {
   nameIn.oninput = (function(i, avEl, inp) {
     return function() {
       st.workers[i].name = this.value;
+      st.workers[i].uid = '';
+      st.workers[i].email = '';
       avEl.textContent   = initials(this.value);
       schedSave();
       showWorkerAutocomplete(inp, i);
@@ -1278,8 +2009,18 @@ function makeWorkerRow(worker, idx) {
   })(idx, av, nameIn);
 
   nameIn.onblur = function() {
+    commitTypedWorkerEntry(idx, nameIn);
     // Delay hide so click on list item can fire first
     setTimeout(function() { hideWorkerAutocomplete(); }, 180);
+  };
+
+  nameIn.onkeydown = function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commitTypedWorkerEntry(idx, nameIn);
+      hideWorkerAutocomplete();
+      renderWorkers();
+    }
   };
 
   // Role select
@@ -1296,7 +2037,8 @@ function makeWorkerRow(worker, idx) {
   roleEl.onchange = (function(i) {
     return function() {
       st.workers[i].role = this.value;
-      schedSave();
+      savePSI({});
+      if (typeof flushPendingFirebaseWrites === 'function') flushPendingFirebaseWrites();
     };
   })(idx);
 
@@ -1311,8 +2053,9 @@ function makeWorkerRow(worker, idx) {
       st.workers.splice(i, 1);
       // Clear sig for removed worker
       delete st.sigs[i];
+      savePSI({});
+      if (typeof flushPendingFirebaseWrites === 'function') flushPendingFirebaseWrites();
       renderWorkers();
-      schedSave();
     };
   })(idx);
 
@@ -1344,7 +2087,7 @@ function showWorkerAutocomplete(inp, workerIdx) {
     item.textContent = w.name;
     item.onmousedown = function(e) {
       e.preventDefault(); // prevent blur firing before click
-      selectWorkerName(w.name, workerIdx);
+      selectWorkerEntry(w, workerIdx);
     };
     list.appendChild(item);
   });
@@ -1364,18 +2107,38 @@ function hideWorkerAutocomplete() {
   _workerAutoTarget = null;
 }
 
-function selectWorkerName(name, workerIdx) {
+function commitTypedWorkerEntry(workerIdx, inputEl) {
+  if (!inputEl || st.workers[workerIdx] == null) return;
+  var raw = String(inputEl.value || '').trim();
+  if (!raw) return;
+
+  var matched = (typeof resolveWorkerDirectoryEntry === 'function')
+    ? resolveWorkerDirectoryEntry(raw)
+    : null;
+
+  st.workers[workerIdx].name = matched ? String(matched.name || raw).trim() : raw;
+  st.workers[workerIdx].uid = matched ? (matched.uid || '') : '';
+  st.workers[workerIdx].email = matched ? (matched.email || '') : '';
+
+  if (typeof savePSI === 'function') savePSI({}, { immediate: true });
+  if (typeof flushPendingFirebaseWrites === 'function') flushPendingFirebaseWrites();
+}
+
+function selectWorkerEntry(entry, workerIdx) {
   hideWorkerAutocomplete();
+  var worker = entry || {};
+  var name = String(worker.name || '').trim();
+  if (!name) return;
 
   // Update state + input
   if (st.workers[workerIdx] != null) {
     st.workers[workerIdx].name = name;
+    st.workers[workerIdx].uid = worker.uid || '';
+    st.workers[workerIdx].email = worker.email || '';
   }
+  savePSI({});
+  if (typeof flushPendingFirebaseWrites === 'function') flushPendingFirebaseWrites();
   renderWorkers();
-  schedSave();
-
-  // Save to sheets
-  sheetsSaveWorker(name, st.workers[workerIdx] ? st.workers[workerIdx].role : 'Worker');
 
   // Try to auto-load signature from sheets
   sheetsFetchSignature(name, 'full').then(function(strokes) {
@@ -1390,8 +2153,9 @@ function selectWorkerName(name, workerIdx) {
 
 function addWorkerRow() {
   st.workers.push({ name: '', role: 'Worker' });
+  savePSI({});
+  if (typeof flushPendingFirebaseWrites === 'function') flushPendingFirebaseWrites();
   renderWorkers();
-  schedSave();
 
   // Focus new name input
   const rows = document.getElementById('workerRows');
@@ -1412,6 +2176,7 @@ function renderSigStep() {
   const isApproved       = psi && psi.approved;
   const workerFieldsOpen = psi ? (psi.worker_fields_open !== false) : true;
   const workerCanSign    = !isApproved || workerFieldsOpen;
+  const isFullAccessUser = typeof userHasFullAccess === 'function' ? userHasFullAccess() : false;
   const needsLift = psiNeedsLift(psi || {});
   const hasLift = !!(psi && psi.liftUnitKey);
 
@@ -1463,17 +2228,16 @@ function renderSigStep() {
     }
   }
 
-  // Supervisor sign-off button
-  const btnSupSign = document.getElementById('btnSupSign');
-  if (btnSupSign) {
-    btnSupSign.style.display = userHasFullAccess() ? '' : 'none';
-  }
-
   // Submit button â€” hide for locked PSIs, hide if already submitted
   const btnSubmit = document.getElementById('btnSubmit');
   if (btnSubmit) {
     if (isApproved) {
       btnSubmit.style.display = 'none';
+    } else if (psi && psi.unpublished) {
+      btnSubmit.style.display = '';
+      btnSubmit.textContent   = 'Publish to Open Work';
+      btnSubmit.disabled      = false;
+      btnSubmit.style.opacity = '';
     } else if (psi && psi.submittedForApproval) {
       btnSubmit.style.display = '';
       btnSubmit.textContent   = 'In Supervisor Review';
@@ -1489,7 +2253,39 @@ function renderSigStep() {
       btnSubmit.style.opacity = needsLift && !hasLift ? '0.6' : '';
     }
   }
+  if (psi && psi.unpublished) {
+    const banner = document.getElementById('approvedBanner');
+    if (banner) {
+      banner.style.display = '';
+      banner.className = 'pending-banner';
+      banner.textContent = 'Private draft - this PSI will stay off the board until you publish it';
+    }
+  }
   updateLiftRequirementUI(psi || {});
+}
+
+function refreshVisiblePSIViews() {
+  const editor = document.getElementById('editor');
+  const dashboard = document.getElementById('dashboard');
+
+  if (editor && editor.style.display !== 'none') {
+    if (_curStep === 4 && typeof renderWorkers === 'function') {
+      var livePsi = me && me.activePSI && typeof loadPSI === 'function' ? loadPSI(me.activePSI) : null;
+      if (livePsi) st.workers = livePsi.workers || st.workers;
+      renderWorkers();
+    }
+    if (_curStep === 5 && typeof renderSigStep === 'function') {
+      var sigPsi = me && me.activePSI && typeof loadPSI === 'function' ? loadPSI(me.activePSI) : null;
+      if (sigPsi) {
+        st.workers = sigPsi.workers || st.workers;
+        st.sigs = sigPsi.sigs || st.sigs;
+      }
+      renderSigStep();
+    }
+  }
+  if (dashboard && dashboard.style.display !== 'none' && typeof refreshDash === 'function') {
+    refreshDash();
+  }
 }
 
 
@@ -1499,6 +2295,12 @@ function submitForApproval() {
   const workers = st.workers.filter(function(w) { return w.name; });
   if (workers.length === 0) { toast('Add workers before submitting'); return; }
   const psi = savePSI({}) || loadPSI(me.activePSI) || {};
+  if (isUnpublishedPSI(psi)) {
+    publishActivePSI();
+    toast('PSI published to Open Work');
+    setTimeout(function() { edBack(); }, 500);
+    return;
+  }
   if (typeof confirmPSISubmissionCheck === 'function' && !confirmPSISubmissionCheck(psi)) {
     return;
   }
@@ -1615,9 +2417,14 @@ function approvePSI() {
   }
 
   const psi = loadPSI(me.activePSI);
-  saveLearnedTemplate(psi);
-  buildPDFWithSigs(psi, { isFinal: true, supStrokes: strokes, supPng: png });
-  toast('PSI approved and PDF downloaded');
+  if (!psi) {
+    toast('PSI not found');
+    return;
+  }
+  psi.supSigStrokes = strokes.slice();
+  psi.supSigPng = png;
+  buildPDF(psi, { isFinal: true });
+  toast('PSI approved \u2014 tap Download PDF');
 
   setTimeout(function() { edBack(); }, 500);
 }
